@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { startClock, useGame } from './game/store';
+import { bindSound } from './audio/bind';
 import { Header } from './ui/Header';
 import { HillView } from './ui/HillView';
 import { Hall } from './ui/Hall';
@@ -15,6 +16,7 @@ const use3d = new URLSearchParams(location.search).get('scene') === '3d';
 export default function App() {
   const page = useGame((s) => s.page);
   useEffect(() => startClock(), []);
+  useEffect(() => bindSound(), []);
   return (
     <div className={`app page-${page}`}>
       {page === 'hill' && (use3d ? <Suspense fallback={null}><Scene /></Suspense> : <HillView />)}
