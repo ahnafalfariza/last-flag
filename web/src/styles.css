@@ -239,6 +239,15 @@ p, h1, h2 { margin: 0; }
 .strip button.on .thumb { border-color: var(--gold); }
 .strip .cap { font: 500 13px var(--display); color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8); }
 
+/* tablet and small laptop: keep the header on one line */
+.wordmark, .chunky-nav button span, .purse-text b { white-space: nowrap; }
+@media (max-width: 1100px) {
+  .chunky-nav button { padding: 0 10px; }
+  .chunky-nav button span { display: none; }
+  .split { min-width: 0; }
+  .tray { gap: 18px; padding: 0 18px; }
+}
+
 /* phone */
 @media (max-width: 720px) {
   :root { --tray-h: 236px; }
