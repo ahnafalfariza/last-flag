@@ -142,7 +142,7 @@ export const useGame = create<Store>((set, get) => ({
   speed: 1,
   botsOn: true,
   keeperOn: true,
-  page: 'hill',
+  page: 'rules',
   me: ME,
   balance: 25,
   connected: false,
