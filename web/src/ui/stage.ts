@@ -55,6 +55,12 @@ export const useStageSize = (el: HTMLElement | null) => {
   return size;
 };
 
+/** Sky to add above a render so its flag sits at least `clear` px down, below the header. */
+export const headroom = (lm: Landmarks, stage: { w: number; h: number }, clear: number) => {
+  const s = Math.max(stage.w / lm.w, stage.h / lm.h);
+  return Math.max(0, Math.round(clear - lm.flag[1] * lm.h * s));
+};
+
 /** Maps a fraction of the render to pixels on a stage that shows it with object-fit: cover. */
 export const coverPoint = (lm: { w: number; h: number }, stage: { w: number; h: number }, [fx, fy]: [number, number], pos: [number, number] = [0.5, 0.5]) => {
   const s = Math.max(stage.w / lm.w, stage.h / lm.h);

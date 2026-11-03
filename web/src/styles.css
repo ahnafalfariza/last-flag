@@ -35,6 +35,9 @@ p, h1, h2 { margin: 0; }
 /* stage: a render, full bleed, and everything anchored on it */
 .stage { position: absolute; inset: 0; overflow: hidden; background: #1c2430; }
 .stage.night { background: #0b1020; }
+/* day render pushed down below the header: the band above is sky, and the render's top edge fades into it */
+.stage.day { background: #4e88b8; }
+.stage .bg.lift, .howto .shot.lift { object-position: 50% 0; -webkit-mask-image: linear-gradient(transparent, #000 56px); mask-image: linear-gradient(transparent, #000 56px); }
 .stage .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.4s ease; }
 .stage .bg.on { opacity: 1; }
 .stage.day .bg.on { animation: breathe 70s ease-in-out infinite alternate; }
@@ -54,6 +57,8 @@ p, h1, h2 { margin: 0; }
 /* name tags */
 .tag { position: absolute; padding: 4px 10px; border-radius: 999px; background: rgba(14, 18, 26, 0.78); border: 1px solid rgba(255, 255, 255, 0.25); color: #fff; font-size: 12px; font-weight: 800; white-space: nowrap; z-index: 3; }
 .tag.anchor { transform: translate(-50%, -50%); transition: left 0.6s ease, top 0.6s ease; }
+/* beside the flag, not on it */
+.tag.anchor.lead { transform: translate(0, -50%); }
 .tag-me { background: rgba(46, 111, 216, 0.85); }
 
 /* header: floating game HUD pieces, no bar */
@@ -271,7 +276,9 @@ p, h1, h2 { margin: 0; }
 .page-hall .demo { display: none; }
 .page-rules .demo { display: none; }
 
-.howto { background: #0d1117; }
+.howto { --lift: max(0px, 150px - 7.3vw); background: #0d1117; transition: background-color 0.9s ease; }
+.howto.lift { background: #4e88b8; }
+.howto .shot.lift { top: var(--lift); height: calc(100% - var(--lift)); }
 .howto .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scale(1); transition: opacity 0.9s ease, transform 1.4s cubic-bezier(0.2, 0.7, 0.2, 1); }
 .howto .shot.on { opacity: 1; transform: scale(var(--z)); animation: push 14s ease-out forwards; }
 @keyframes push { from { transform: scale(calc(var(--z) * 0.94)); } to { transform: scale(var(--z)); } }

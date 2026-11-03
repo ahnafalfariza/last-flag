@@ -15,13 +15,15 @@ interface Shot {
   fact: (p: Params) => string;
   night?: boolean;
   flash?: boolean;
+  /** Push the render below the header so the flag on the tower shows; sky fills the band above. */
+  lift?: boolean;
   /** Copy goes on the right when the subject sits on the left. */
   right?: boolean;
 }
 
 const SHOTS: Shot[] = [
   {
-    key: 'bid', title: 'Bid', src: '/img/hill_day.jpg', focus: [0.6, 0.1], zoom: 1.5,
+    key: 'bid', title: 'Bid', src: '/img/hill_day.jpg', focus: [0.6, 0], zoom: 1.5, lift: true,
     line: 'Bid to take the lead.',
     sub: (p) => `Each bid has to be ${p.growthBps / 100}% bigger than the one before. The first bid is ${near(p.minDepositStart)} NEAR. Your flag on the tower shows you're in the lead.`,
     fact: (p) => `first bid ${near(p.minDepositStart)} NEAR, then +${p.growthBps / 100}%`,
@@ -76,11 +78,11 @@ export function Rules() {
   }, []);
 
   return (
-    <main className={`stage howto ${shot.night ? 'night' : ''} ${shot.right ? 'right' : ''}`}>
+    <main className={`stage howto ${shot.night ? 'night' : ''} ${shot.right ? 'right' : ''} ${shot.lift ? 'lift' : ''}`}>
       {SHOTS.map((s, k) => (
         <img
           key={s.key}
-          className={`shot ${k === i ? 'on' : ''}`}
+          className={`shot ${k === i ? 'on' : ''} ${s.lift ? 'lift' : ''}`}
           src={s.src}
           alt=""
           style={{ transformOrigin: `${s.focus[0] * 100}% ${s.focus[1] * 100}%`, ['--z' as string]: s.zoom }}
