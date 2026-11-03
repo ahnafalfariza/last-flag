@@ -151,7 +151,7 @@ export const useGame = create<Store>((set, get) => ({
   settled: [],
   banners: seeded.banners,
   thunder: [],
-  feed: [{ id: id(), at: 0, kind: 'open' as const, text: 'Round 12 is on the hill. whale holds the flag.' }],
+  feed: [{ id: id(), at: 0, kind: 'open' as const, text: 'Round 12 is on. Bid to take the lead.' }],
   strike: null,
   flash: 0,
   whaleThreshold: seeded.round.prize + 0.6,
@@ -173,8 +173,8 @@ export const useGame = create<Store>((set, get) => ({
   deposit: (account, amount) => {
     const s = get();
     const { round, params, now, banners } = s;
-    if (round.state === 'Settled') return 'The hill is settling. Wait for the next round.';
-    if (amount < round.minDeposit - 1e-9) return `The next block must be at least ${round.minDeposit.toFixed(2)} NEAR.`;
+    if (round.state === 'Settled') return 'This round just ended. Wait a moment for the next one.';
+    if (amount < round.minDeposit - 1e-9) return `Bids must be at least ${round.minDeposit.toFixed(2)} NEAR right now.`;
     if (account === s.me && amount > s.balance) return 'Not enough NEAR in your wallet.';
 
     const principal = amount * (1 - (params.potFeeBps + params.royaltyFeeBps) / 10_000);
@@ -200,8 +200,8 @@ export const useGame = create<Store>((set, get) => ({
     };
     const who = account === s.me ? 'You' : account.replace('.testnet', '');
     const text = calmed
-      ? `${who} raised a flag for ${amount.toFixed(2)}. The storm breaks, the sun is back.`
-      : `${who} planted a flag for ${amount.toFixed(2)} NEAR.`;
+      ? `${who} bid ${amount.toFixed(2)} NEAR and took the lead. Bidding is open again.`
+      : `${who} bid ${amount.toFixed(2)} NEAR and took the lead.`;
     set({
       round: next,
       banners: newBanners,
@@ -245,8 +245,7 @@ export const useGame = create<Store>((set, get) => ({
     };
     const settledRound: Round = { ...round, state: 'Settled', ticks };
     const who = winner === s.me ? 'You' : winner.replace('.testnet', '');
-    const ringer = by === s.me ? 'You rang the bell and' : `${by.replace('.testnet', '')} rang the bell and`;
-    set({
+        set({
       round: openRound(round.id + 1, now, params),
       settled: [settledRound, ...s.settled].slice(0, 5),
       banners: [...s.banners, banner],
@@ -256,8 +255,8 @@ export const useGame = create<Store>((set, get) => ({
       balance: by === s.me ? s.balance + params.keeperReward : s.balance,
       whaleThreshold: 0.6,
       feed: [
-        { id: id(), at: now, kind: 'open' as const, text: `Round ${round.id + 1} opens. The chest under Banner ${round.id} starts filling.` },
-        { id: id(), at: now, kind: 'strike' as const, text: `${ringer} the strike hit. ${who} hold${winner === s.me ? '' : 's'} Banner ${round.id}: ${round.prize.toFixed(2)} NEAR.` },
+        { id: id(), at: now, kind: 'open' as const, text: `Round ${round.id + 1} is open. Bid to take the lead.` },
+        { id: id(), at: now, kind: 'strike' as const, text: `Round ${round.id} is over. ${who} won ${round.prize.toFixed(2)} NEAR.` },
         ...s.feed,
       ].slice(0, 40),
     });
@@ -284,7 +283,7 @@ export const useGame = create<Store>((set, get) => ({
       round,
       settled,
       balance: account === s.me ? s.balance + got : s.balance,
-      feed: [{ id: id(), at: s.now, kind: 'tent' as const, text: `${who} packed up: ${got.toFixed(2)} NEAR back from round ${roundId}.` }, ...s.feed].slice(0, 40),
+      feed: [{ id: id(), at: s.now, kind: 'tent' as const, text: `${who} withdrew ${got.toFixed(2)} NEAR from round ${roundId}.` }, ...s.feed].slice(0, 40),
     });
     return got;
   },
@@ -296,7 +295,7 @@ export const useGame = create<Store>((set, get) => ({
     set({
       banners: s.banners.map((x) => (x.id === bannerId ? { ...x, claimed: true } : x)),
       balance: s.balance + b.prize,
-      feed: [{ id: id(), at: s.now, kind: 'info' as const, text: `You claimed the tower of round ${bannerId}: ${b.prize.toFixed(2)} NEAR.` }, ...s.feed].slice(0, 40),
+      feed: [{ id: id(), at: s.now, kind: 'info' as const, text: `You collected the round ${bannerId} prize: ${b.prize.toFixed(2)} NEAR.` }, ...s.feed].slice(0, 40),
     });
   },
 
@@ -328,7 +327,7 @@ export const useGame = create<Store>((set, get) => ({
     if (round.state === 'Live' && round.graceUntil !== null && now >= round.graceUntil) {
       round = { ...round, state: 'Armed' };
       patch.nextTickAt = now + 1000;
-      patch.feed = [{ id: id(), at: now, kind: 'storm' as const, text: `The sun is down. Every bell has a ${s.params.hazardBps / 100}% chance to end round ${round.id}.` }, ...s.feed].slice(0, 40);
+      patch.feed = [{ id: id(), at: now, kind: 'storm' as const, text: `Sudden death. Every second there's a ${s.params.hazardBps / 100}% chance round ${round.id} ends.` }, ...s.feed].slice(0, 40);
     }
     patch.round = round;
     set(patch);
