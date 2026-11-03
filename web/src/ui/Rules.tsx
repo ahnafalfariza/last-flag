@@ -21,40 +21,40 @@ interface Shot {
 
 const SHOTS: Shot[] = [
   {
-    key: 'flag', title: 'Plant a flag', src: '/img/hill_day.jpg', focus: [0.6, 0.1], zoom: 1.5,
-    line: 'Put a block on the tower. Your flag goes on top.',
-    sub: (p) => `Each block has to be ${p.growthBps / 100}% bigger than the last one. The first one is ${near(p.minDepositStart)} NEAR.`,
-    fact: (p) => `min ${near(p.minDepositStart)} · +${p.growthBps / 100}% a block`,
+    key: 'bid', title: 'Bid', src: '/img/hill_day.jpg', focus: [0.6, 0.1], zoom: 1.5,
+    line: 'Bid to take the lead.',
+    sub: (p) => `Each bid has to be ${p.growthBps / 100}% bigger than the one before. The first bid is ${near(p.minDepositStart)} NEAR. Your flag on the tower shows you're in the lead.`,
+    fact: (p) => `first bid ${near(p.minDepositStart)} NEAR, then +${p.growthBps / 100}%`,
   },
   {
-    key: 'sun', title: 'The sun', src: '/img/hill_day.jpg', focus: [0.28, 0.18], zoom: 1.5,
-    line: 'While the sun is up, nobody can end it.',
-    sub: (p) => `Every new flag drags the sun back to noon. You get ${p.graceMs / 1000} seconds of daylight to answer.`,
-    fact: (p) => `${p.graceMs / 1000}s of daylight`,
+    key: 'timer', title: 'The timer', src: '/img/hill_day.jpg', focus: [0.28, 0.18], zoom: 1.5,
+    line: 'Every bid resets a one-minute timer.',
+    sub: (p) => `While the timer runs, nobody can win. Anyone can outbid the leader, and each bid puts the timer back to ${p.graceMs / 1000} seconds.`,
+    fact: (p) => `${p.graceMs / 1000}s after every bid`,
   },
   {
-    key: 'storm', title: 'The storm', src: '/img/hill_night.jpg', focus: [0.6, 0.12], zoom: 1.45, night: true,
-    line: 'Sunset. Now any bell could be the last.',
-    sub: (p) => `Anyone can ring. Each ring is a ${p.hazardBps / 100}% roll. There is no clock to snipe, so you raise a flag now or you hope.`,
-    fact: (p) => `${p.hazardBps / 100}% a bell`,
+    key: 'sudden', title: 'Sudden death', src: '/img/hill_night.jpg', focus: [0.6, 0.12], zoom: 1.45, night: true,
+    line: 'When the timer hits zero, the round can end any second.',
+    sub: (p) => `Every second there's a ${p.hazardBps / 100}% chance it ends. There's no countdown to wait out, so either bid now and take the lead, or hope it ends while someone else is ahead of you.`,
+    fact: (p) => `${p.hazardBps / 100}% chance every second`,
   },
   {
-    key: 'strike', title: 'The strike', src: '/img/hill_night.jpg', focus: [0.63, 0.36], zoom: 1.5, night: true, flash: true,
-    line: 'Lightning hits. The flag on top takes the tower.',
-    sub: () => 'All of it: every fee anyone paid, plus the staking yield every tent earned while the round ran.',
-    fact: (p) => `ends by ${p.hardCapMs / 60000} min no matter what`,
+    key: 'win', title: 'The win', src: '/img/hill_night.jpg', focus: [0.63, 0.36], zoom: 1.5, night: true, flash: true,
+    line: 'Lightning strikes. Whoever leads wins the prize.',
+    sub: () => 'The prize is the fees from every bid, plus the staking yield everyone\'s deposits earned while the round ran.',
+    fact: (p) => `always ends within ${p.hardCapMs / 60000} min of the last bid`,
   },
   {
     key: 'banner', title: 'The banner', src: '/img/hall.jpg', focus: [0.3, 0.42], zoom: 1.35, right: true,
-    line: 'You get a banner. It keeps paying.',
-    sub: (p) => `${p.royaltyFeeBps / 100}% of every block in the next round drops into the chest under it. Sell the banner and the chest goes with it.`,
-    fact: (p) => `${p.royaltyFeeBps / 100}% of round N+1`,
+    line: 'The winner also gets a banner that keeps paying.',
+    sub: (p) => `${p.royaltyFeeBps / 100}% of every bid in the next round goes to whoever holds the banner. You can sell it, and the earnings go with it.`,
+    fact: (p) => `${p.royaltyFeeBps / 100}% of next round's bids`,
   },
   {
-    key: 'tent', title: 'Your tent', src: '/img/hill_day.jpg', focus: [0.25, 0.95], zoom: 1.5,
-    line: 'Everyone else walks home whole.',
-    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every block you play is your tent. It's staked while you wait and comes back in full. Pack up early whenever you're not on top.`,
-    fact: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% comes back`,
+    key: 'deposit', title: 'Your deposit', src: '/img/hill_day.jpg', focus: [0.25, 0.95], zoom: 1.5,
+    line: 'Everyone gets their money back.',
+    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every bid is your deposit. It's staked while you wait and comes back in full after the round. If you're not in the lead, you can withdraw any time.`,
+    fact: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of each bid comes back`,
   },
 ];
 
@@ -98,9 +98,9 @@ export function Rules() {
         <div className="howto-nav">
           <button className="ghost" onClick={() => setI(i - 1)} disabled={i === 0} aria-label="Previous">←</button>
           {last ? (
-            <button className="primary" onClick={() => setPage('hill')}>GO PLANT A FLAG</button>
+            <button className="primary" onClick={() => setPage('hill')}>Go to the hill</button>
           ) : (
-            <button className="primary" onClick={() => setI(i + 1)}>NEXT · {SHOTS[i + 1].title}</button>
+            <button className="primary" onClick={() => setI(i + 1)}>Next: {SHOTS[i + 1].title}</button>
           )}
         </div>
       </section>

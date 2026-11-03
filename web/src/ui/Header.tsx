@@ -43,8 +43,8 @@ export function Header() {
   const connected = useGame((s) => s.connected);
   const connect = useGame((s) => s.connect);
   const armed = round.state === 'Armed';
-  const since = round.lastDepositAt !== null ? now - round.lastDepositAt : 0;
-  const status = round.state === 'Open' ? 'hill empty' : armed ? `storm · ${duration(since)}` : 'sun is up';
+  const since = round.graceUntil !== null ? now - round.graceUntil : 0;
+  const status = round.state === 'Open' ? 'no bids yet' : armed ? `sudden death ${duration(since)}` : 'bidding';
 
   return (
     <header className={`header ${armed ? 'night' : ''}`}>

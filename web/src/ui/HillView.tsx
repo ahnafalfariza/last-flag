@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { accountColor, campers, graceFraction, myStake, useGame } from '../game/store';
-import { mmss, near, short } from '../game/format';
+import { campers, graceFraction, myStake, useGame } from '../game/store';
+import { near, short } from '../game/format';
 import { coverPoint, DAY, NIGHT, PHONE, PHONE_NIGHT, usePhone, useStageSize, type Landmarks } from './stage';
 import { ActionTray } from './ActionTray';
+import { Tracker } from './Tracker';
 
 const Block = ({ size = 34 }: { size?: number }) => (
   <svg aria-hidden="true" width={size} height={size * 0.875} viewBox="0 0 80 70">
@@ -12,7 +13,17 @@ const Block = ({ size = 34 }: { size?: number }) => (
 
 interface Bolt { id: number; x1: number; y1: number; x2: number; y2: number; hit: boolean; mids: [number, number][] }
 
-/** The hill as the judges saw it on the canvas: a render, a HUD over it, and the few things that move. */
+/** m:ss, for countdowns a player reads at a glance. */
+const clock = (ms: number) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+const SEEN_KEY = 'lastflag.explainer.seen';
+const readSeen = () => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return false; } };
+const writeSeen = () => { try { localStorage.setItem(SEEN_KEY, '1'); } catch { /* private mode: show it again next time */ } };
+
+/** The hill: the render, one status card, one action bar, and the few things that move. */
 export function HillView() {
   const round = useGame((s) => s.round);
   const settled = useGame((s) => s.settled);
@@ -25,11 +36,13 @@ export function HillView() {
   const tick = useGame((s) => s.tick);
   const withdraw = useGame((s) => s.withdraw);
   const connected = useGame((s) => s.connected);
-  const keeperOn = useGame((s) => s.keeperOn);
+  const setPage = useGame((s) => s.setPage);
   const phone = usePhone();
 
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
   const size = useStageSize(stageEl);
+  const [seen, setSeen] = useState(readSeen);
+  const [details, setDetails] = useState(false);
   const armed = round.state === 'Armed';
   const nightLm = phone ? PHONE_NIGHT : NIGHT;
   const lm: Landmarks = armed ? nightLm : phone ? PHONE : DAY;
@@ -47,7 +60,7 @@ export function HillView() {
     seenCount.current = round.deposits.length;
   }, [round.deposits]);
 
-  // Bolts: a jagged line for every bell. Misses land on the hillside, the strike hits the tower.
+  // Bolts: a jagged line for every check. Misses land on the hillside, the one that ends the round hits the tower.
   const [bolts, setBolts] = useState<Bolt[]>([]);
   const lastThunder = useRef<number>(-1);
   const [shake, setShake] = useState(false);
@@ -70,15 +83,18 @@ export function HillView() {
   const f = graceFraction(round, now, params);
   const stake = myStake(round, me);
   const leading = round.leader === me;
+  const leader = leading ? 'You' : short(round.leader);
   const oldStakes = settled.map((r) => ({ id: r.id, amount: myStake(r, me) })).filter((x) => x.amount > 0);
   const camp = campers(round).sort((a, b) => (a.account === me ? -1 : b.account === me ? 1 : b.principal - a.principal));
   const shown = camp.slice(0, lm.tents.length);
   const extra = camp.length - shown.length;
-  const leaderStake = round.leader ? round.deposits.filter((d) => d.account === round.leader).reduce((a, d) => a + d.amount, 0) : 0;
-  const sinceFlag = round.lastDepositAt !== null ? now - round.lastDepositAt : 0;
+  const checks = armed && round.graceUntil !== null ? thunder.filter((t) => t.at >= round.graceUntil!).slice(0, 3) : [];
   const flagP = at(lm.flag);
-  const towerP = at(lm.tower);
   const latest = feed[0];
+  const graceSecs = params.graceMs / 1000;
+  const chance = params.hazardBps / 100;
+
+  const dismiss = () => { writeSeen(); setSeen(true); };
 
   return (
     <div className={`stage ${armed ? 'night' : 'day'} ${shake ? 'shake' : ''}`} ref={setStageEl}>
@@ -94,96 +110,115 @@ export function HillView() {
         ))}
       </svg>
 
-      {/* flag tag: who holds it */}
+      {/* who leads, on the tower */}
       {round.leader && size.w > 0 && (
-        <div className={`tag anchor ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x, top: Math.max(flagP.y, phone ? 150 : 118), borderColor: accountColor(round.leader) }}>
-          {leading ? 'you hold the flag' : `${short(round.leader)} holds the flag`} · {near(leaderStake)} NEAR{phone ? '' : ` · ${Math.floor(sinceFlag / 60000)} min ago`}
+        <div className={`tag anchor lead ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x, top: Math.max(flagP.y, phone ? 345 : 118) }}>
+          {leading ? "You're leading" : `${leader} is leading`}
         </div>
       )}
-      {round.state === 'Open' && size.w > 0 && (
-        <div className="tag anchor" style={{ left: flagP.x, top: Math.max(flagP.y, phone ? 150 : 118), borderColor: '#FFD54A' }}>the hill is empty · plant the first flag</div>
-      )}
 
-      {/* falling blocks */}
       {drops.map((id) => (
-        <div key={id} className="drop" style={{ left: towerP.x, top: towerP.y }}><Block size={phone ? 26 : 40} /></div>
+        <div key={id} className="drop" style={{ left: at(lm.tower).x, top: at(lm.tower).y }}><Block size={phone ? 26 : 40} /></div>
       ))}
 
-      {/* tent tags */}
+      {/* players, at the tents */}
       {size.w > 0 && shown.map((c, i) => {
         const p = at(lm.tents[i]);
         const mine = c.account === me;
-        return (
-          <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: p.y }}>
-            {mine ? 'you' : short(c.account)} · {near(c.principal)} {mine ? 'NEAR in the tent' : ''}
-          </div>
-        );
+        return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: p.y }}>{mine ? 'You' : short(c.account)}</div>;
       })}
-      {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 150, top: phone ? p.y + 28 : p.y }}>+{extra} more tent{extra === 1 ? '' : 's'} camped</div>; })()}
+      {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : p.y }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
 
-      {/* left column */}
-      <div className="col-left">
-        {round.state === 'Open' && (
-          <div className="hud panel">
-            <span className="label">THE HILL IS EMPTY</span>
-            <span className="big">—</span>
-            <span className="sub">the first flag starts the sun</span>
+      {/* the one card that says what is happening */}
+      <section className={`card status-card ${armed ? 'armed' : ''}`} aria-label="Round status">
+        <Tracker state={round.state} />
+        {round.state === 'Open' ? (
+          <>
+            <div className="who">
+              <span className="sub-l">No bids yet</span>
+              <span className="prize">Be the first</span>
+            </div>
+            <p className="note">The first bid is {near(round.minDeposit)} NEAR and starts a {clock(params.graceMs)} timer. Whoever leads when the round ends wins the prize.</p>
+          </>
+        ) : (
+          <div className="who">
+            <span className="sub-l">{armed ? <>If it ends now, <b>{leading ? 'you win' : `${leader} wins`}</b></> : <><b>{leader}</b> {leading ? "are in the lead and would win" : 'is in the lead and would win'}</>}</span>
+            <span className="prize">{near(round.prize)} NEAR</span>
           </div>
         )}
         {round.state === 'Live' && round.graceUntil !== null && (
-          <div className="hud panel">
-            <span className="label">SUNSET IN</span>
-            <span className="big">{mmss(round.graceUntil - now)}</span>
-            <div className="sunbar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(f * 100)} aria-label="Daylight remaining"><div style={{ width: `${f * 100}%` }} /></div>
-            <span className="sub">a new flag resets the sun to noon</span>
+          <div className="timer">
+            <div className="timer-row"><span>Bidding closes in</span><b>{clock(round.graceUntil - now)}</b></div>
+            <div className="bar" role="progressbar" aria-label="Time left in bidding" aria-valuemin={0} aria-valuemax={graceSecs} aria-valuenow={Math.round(f * graceSecs)}><div style={{ width: `${f * 100}%` }} /></div>
+            <p className="note">Any new bid resets this to {clock(params.graceMs)}. If it hits zero, sudden death starts.</p>
           </div>
         )}
         {armed && round.hardCapAt !== null && (
-          <>
-            <div className="hud panel storm" role="status">
-              <span className="label red-soft">STORM OVER THE HILL</span>
-              <span className="big red">{params.hazardBps / 100}% <span className="unit">/ bell</span></span>
-              <span className="sub">lightning can hit the tower on any bell · no countdown to snipe</span>
-            </div>
-            <div className="hud panel log">
-              <span className="label">THUNDER LOG</span>
-              {thunder.slice(0, 4).map((t) => (
-                <span key={t.id} className={`line ${t.struck ? 'hit' : ''}`}><b>{t.by === me ? 'you' : t.by.split('.')[0]}</b> roll {String(t.roll).padStart(4, '0')} · {t.struck ? 'STRIKE' : 'tower stands'}</span>
-              ))}
-              {thunder.length === 0 && <span className="line">no bells yet</span>}
-              <span className="sub">a roll under {String(params.hazardBps).padStart(4, '0')} is the strike · {round.ticks} bells · dawn by {mmss(round.hardCapAt - now)}</span>
-            </div>
-          </>
-        )}
-        {(stake > 0 || oldStakes.length > 0) && (
-          <div className="hud panel tent">
-            <span className="label blue">YOUR TENT</span>
-            <span className="mid blue">{near(stake)} <span className="unit">NEAR</span> <span className="sub">{leading ? 'yours while you hold the flag' : stake > 0 ? 'safe, comes home' : ''}</span></span>
-            {stake > 0 && !leading && <button className="ghost" onClick={() => withdraw(round.id, me)}>PACK UP · {near(stake)} back now</button>}
-            {oldStakes.map((o) => (
-              <button key={o.id} className="ghost gold-b" onClick={() => withdraw(o.id, me)}>ROUND {o.id} SETTLED · TAKE {near(o.amount)} HOME</button>
-            ))}
+          <div className="danger" role="status">
+            <b>Could end any second</b>
+            <p>Every second there's a {chance}% chance the round ends. There's no countdown to wait out. A new bid puts you in the lead and restarts bidding.</p>
+            <span>Ends for sure in {clock(round.hardCapAt - now)}</span>
           </div>
         )}
+        {round.state !== 'Open' && (
+          <button className="link" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? 'Hide round details' : 'Round details'}</button>
+        )}
+        {details && round.state !== 'Open' && (
+          <div className="details">
+            <dl>
+              <dt>Bids this round</dt><dd>{round.deposits.length}</dd>
+              <dt>Players' deposits</dt><dd>{near(round.principalTotal, 1)} NEAR</dd>
+              <dt>Next bid at least</dt><dd>{near(Math.ceil(round.minDeposit * 100) / 100)} NEAR</dd>
+              {armed && <><dt>Checks so far</dt><dd>{round.ticks}</dd></>}
+            </dl>
+            {checks.length > 0 && (
+              <ul className="checks">
+                {checks.map((t, i) => <li key={t.id} className={t.struck ? 'hit' : ''}>Check {round.ticks - i}: {t.struck ? 'the round ends' : 'the round goes on'}</li>)}
+              </ul>
+            )}
+            {armed && (
+              <>
+                <button className="ghost" onClick={() => tick(me)} disabled={!connected}>Run a check yourself</button>
+                <p className="note">Anyone can run a check. If yours ends the round, you get {params.keeperReward} NEAR.</p>
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div className="col-right">
+        {!seen && !phone && (
+          <aside className="explain" aria-labelledby="explain-h">
+            <h2 id="explain-h">New here? A round in 3 steps</h2>
+            <ol>
+              <li>Bid to take the lead. Each bid has to be {params.growthBps / 100}% bigger than the one before.</li>
+              <li>When nobody bids for {graceSecs === 60 ? 'a minute' : `${graceSecs} seconds`}, sudden death starts. The round can end any second.</li>
+              <li>Whoever leads at the end wins the prize. Everyone gets {100 - (params.potFeeBps + params.royaltyFeeBps) / 100}% of their bids back.</li>
+            </ol>
+            <div className="explain-acts">
+              <button onClick={dismiss}>Got it</button>
+              <button className="link" onClick={() => { dismiss(); setPage('rules'); }}>Full rules</button>
+            </div>
+          </aside>
+        )}
+        {(stake > 0 || oldStakes.length > 0) && (
+          <aside className="card deposit" aria-label="Your deposit">
+            {stake > 0 && (
+              <>
+                <span className="sub-l">Your deposit</span>
+                <span className="amt">{near(stake)} NEAR</span>
+                <p className="note">{leading ? "You're in the lead, so it stays in until someone outbids you or the round ends." : "You're not leading, so you can take it back now or leave it until the round ends."}</p>
+                {!leading && <button className="ghost" onClick={() => withdraw(round.id, me)}>Withdraw {near(stake)} NEAR</button>}
+              </>
+            )}
+            {oldStakes.map((o) => (
+              <button key={o.id} className="ghost gold-b" onClick={() => withdraw(o.id, me)}>Round {o.id} is over. Take back {near(o.amount)} NEAR</button>
+            ))}
+          </aside>
+        )}
       </div>
 
-      {/* tower plaque */}
-      <div className={`hud panel plaque ${armed ? 'armed' : ''}`}>
-        <span className="label amber">THE TOWER · {round.deposits.length} BLOCK{round.deposits.length === 1 ? '' : 'S'}</span>
-        <span className="big gold">{near(round.prize)} <span className="unit">NEAR</span></span>
-        <span className="sub">{armed ? 'still growing from staking while the storm rolls' : 'goes home with the last flag standing'}</span>
-        <span className="sub">{near(round.principalTotal, 1)} NEAR camped on the hill · next block ≥ {near(Math.ceil(round.minDeposit * 100) / 100)}</span>
-      </div>
-
-      {armed && (
-        <div className="hud panel bell">
-          <span className="label">OR RING THE BELL</span>
-          <span className="sub">tick() is public. The ringer whose bell brings the strike gets {params.keeperReward} NEAR from the tower.{keeperOn ? ' The keeper rings once a block.' : ''}</span>
-          <button className="ghost gold-b" onClick={() => tick(me)} disabled={!connected}>RING · call tick()</button>
-        </div>
-      )}
-
-      {latest && <div key={latest.id} className={`ticker ${latest.kind}`}>{latest.text}</div>}
+      {latest && <div key={latest.id} className={`ticker ${latest.kind}`} role="status">{latest.text}</div>}
 
       <ActionTray />
     </div>
