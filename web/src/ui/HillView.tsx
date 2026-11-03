@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { campers, graceFraction, myStake, useGame } from '../game/store';
 import { near, short } from '../game/format';
-import { coverPoint, DAY, NIGHT, PHONE, PHONE_NIGHT, usePhone, useStageSize, type Landmarks } from './stage';
+import { coverPoint, DAY, headroom, NIGHT, PHONE, PHONE_NIGHT, usePhone, useStageSize, type Landmarks } from './stage';
 import { ActionTray } from './ActionTray';
 import { Tracker } from './Tracker';
 
@@ -46,7 +46,14 @@ export function HillView() {
   const armed = round.state === 'Armed';
   const nightLm = phone ? PHONE_NIGHT : NIGHT;
   const lm: Landmarks = armed ? nightLm : phone ? PHONE : DAY;
-  const at = (p: [number, number]) => coverPoint(lm, size, p);
+  // The day render has its flag near the top edge; push it down below the header and let sky fill the gap.
+  // Only just below: every px of lift also pushes the tents toward the bid bar.
+  const lift = phone ? 0 : headroom(DAY, size, 105);
+  const top = lm === DAY ? lift : 0;
+  const at = (p: [number, number]) => {
+    const q = coverPoint(lm, { w: size.w, h: size.h - top }, p, [0.5, top ? 0 : 0.5]);
+    return { ...q, y: q.y + top };
+  };
 
   // Block drops: one per new deposit, falling onto the tower top.
   const [drops, setDrops] = useState<number[]>([]);
@@ -90,6 +97,8 @@ export function HillView() {
   const extra = camp.length - shown.length;
   const checks = armed && round.graceUntil !== null ? thunder.filter((t) => t.at >= round.graceUntil!).slice(0, 3) : [];
   const flagP = at(lm.flag);
+  // On short screens the lifted tents can sit behind the bid bar; keep their tags just above it.
+  const tentY = (y: number) => (phone ? y : Math.min(y, size.h - 150));
   const latest = feed[0];
   const graceSecs = params.graceMs / 1000;
   const chance = params.hazardBps / 100;
@@ -98,7 +107,7 @@ export function HillView() {
 
   return (
     <div className={`stage ${armed ? 'night' : 'day'} ${shake ? 'shake' : ''}`} ref={setStageEl}>
-      <img className={`bg ${armed ? '' : 'on'}`} src={phone ? PHONE.src : DAY.src} alt="" />
+      <img className={`bg ${armed ? '' : 'on'} ${lift ? 'lift' : ''}`} src={phone ? PHONE.src : DAY.src} alt="" style={lift ? { top: lift, height: `calc(100% - ${lift}px)` } : undefined} />
       <img className={`bg ${armed ? 'on' : ''}`} src={nightLm.src} alt="" />
       <div className="rain" style={{ opacity: armed ? 1 : 0 }} />
       <div className="flash" style={{ opacity: armed ? Math.min(0.9, flash * flash) : 0 }} />
@@ -112,7 +121,7 @@ export function HillView() {
 
       {/* who leads, on the tower */}
       {round.leader && size.w > 0 && (
-        <div className={`tag anchor lead ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x, top: Math.max(flagP.y, phone ? 345 : 118) }}>
+        <div className={`tag anchor lead ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x + (phone ? 16 : 26), top: Math.max(flagP.y, phone ? 345 : 118) }}>
           {leading ? "You're leading" : `${leader} is leading`}
         </div>
       )}
@@ -125,9 +134,9 @@ export function HillView() {
       {size.w > 0 && shown.map((c, i) => {
         const p = at(lm.tents[i]);
         const mine = c.account === me;
-        return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: p.y }}>{mine ? 'You' : short(c.account)}</div>;
+        return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: tentY(p.y) }}>{mine ? 'You' : short(c.account)}</div>;
       })}
-      {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : p.y }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
+      {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : tentY(p.y) }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
 
       {/* the one card that says what is happening */}
       <section className={`card status-card ${armed ? 'armed' : ''}`} aria-label="Round status">
