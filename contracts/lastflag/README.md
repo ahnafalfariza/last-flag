@@ -8,7 +8,11 @@ cargo near build          # deployable wasm (install: cargo install cargo-near)
 cargo near deploy <account> with-init-call new json-args '{}' ...
 ```
 
-`new` with no params uses the testnet demo defaults from `LASTFLAG-DESIGN.md` §3. Pass `{"params": {...}}` to override them.
+`new` with no params uses the testnet demo defaults from `LASTFLAG-DESIGN.md` §3, except a 1 NEAR first block. Pass `{"params": {...}}` to override them. `new` refuses params whose first block can't pay its storage (the pot fee of `min_deposit_start` must cover 1,500 bytes, 0.015 NEAR), and a hard cap above 7 days.
+
+`new` is `#[private]`: only the contract account can call it. Deploy and init in one transaction (`with-init-call` does this), so nobody can initialise first with their own params.
+
+"No owner" holds only once the account's full-access keys are deleted after deploy. Until then, whoever holds a key can redeploy the code and take the funds.
 
 ## Methods
 
@@ -29,10 +33,11 @@ Events are NEP-297 logs under standard `lastflag`: `flag_planted`, `bell`, `stri
 - `deposit` takes `round_id`, so a flag that lands after the strike is refunded instead of opening the next round.
 - There is no yield adapter yet. The tower is fed by fees only.
 - The ringer's reward is capped at 10% of the tower.
-- Storage is paid from the tower: about 72 bytes per new tent and about 840 bytes per banner, roughly 0.0084 NEAR at 1e19 yocto/byte. A round of one 0.1 NEAR demo block ends with a tower of 0.
+- The demo starts at 1 NEAR, not 0.1. A 0.1 NEAR first block pays 0.003 NEAR into the tower, too little for a banner's storage.
+- Storage is paid from fees, never from principal. Each new tent's storage (at most 133 bytes measured) comes out of that block's pot fee. The first block of every round also sets aside 1,300 bytes (0.013 NEAR) in `storage_reserve` for the banner (at most 1,022 bytes measured). At settle, whatever the banner doesn't use goes into the tower.
 
 ## Not done
 
-- near-workspaces sandbox tests: failed-payout callback restore, real block heights and randomness.
+- near-workspaces sandbox tests: failed-payout callback restore, real block heights and randomness, and `new` rejecting other callers. Unit tests call `new` directly, which skips the `#[private]` check.
 - Deploying with `cargo near` has not been tried. A plain `cargo build --target wasm32-unknown-unknown --release` compiles.
 - Dependencies are pinned to near-sdk 5.29.1 by `Cargo.lock`, because 5.30 requires rustc 1.95.

@@ -22,6 +22,13 @@ const BPS: u128 = 10_000;
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 /// The bell ringer never takes more than this share of the tower.
 const KEEPER_MAX_SHARE_BPS: u128 = 1_000;
+/// Worst-case bytes of one new tent (measured 133 for a 64-char account), with margin.
+const TENT_STORAGE_BYTES: u64 = 200;
+/// Worst-case bytes one settle writes, banner record plus NFT token (measured 1022 for a
+/// 64-char winner), with margin.
+const BANNER_STORAGE_BYTES: u64 = 1_300;
+/// Longest hard cap `new` accepts, so a round always ends.
+const MAX_HARD_CAP_MS: u64 = 7 * 24 * 60 * 60_000;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -58,10 +65,11 @@ pub struct Params {
 }
 
 impl Params {
-    /// Testnet demo defaults from the design doc.
+    /// Testnet demo defaults from the design doc, except a 1 NEAR start: the doc's 0.1 NEAR
+    /// first block pays 0.003 NEAR to the tower, too little for a banner's storage.
     fn demo() -> Self {
         Self {
-            min_deposit_start: NearToken::from_millinear(100),
+            min_deposit_start: NearToken::from_near(1),
             growth_bps: 500,
             min_deposit_cap: NearToken::from_near(5),
             pot_fee_bps: 300,
@@ -80,7 +88,15 @@ impl Params {
         );
         require!(u128::from(self.hazard_bps) <= BPS, "hazard_bps above 10000");
         require!(self.hard_cap_ms > self.grace_ms, "hard cap must outlast grace");
+        require!(self.hard_cap_ms <= MAX_HARD_CAP_MS, "hard cap above 7 days");
         require!(self.min_deposit_cap >= self.min_deposit_start, "cap below start");
+        // The first block of a round pays its own tent and sets aside the banner's storage,
+        // so settling never spends principal. This also rules out a zero minimum.
+        let first_block_storage = storage_bytes_cost(TENT_STORAGE_BYTES + BANNER_STORAGE_BYTES);
+        require!(
+            bps(self.min_deposit_start, self.pot_fee_bps) >= first_block_storage,
+            format!("first block's pot fee must cover {first_block_storage} of storage")
+        );
     }
 }
 
@@ -91,6 +107,8 @@ pub struct Round {
     pub opened_at_ms: u64,
     pub leader: Option<AccountId>,
     pub prize: NearToken,
+    /// Set aside by the first block to pay the banner's storage at settle.
+    pub storage_reserve: NearToken,
     pub principal_total: NearToken,
     pub min_deposit: NearToken,
     pub blocks: u32,
@@ -108,6 +126,7 @@ impl Round {
             opened_at_ms: now_ms,
             leader: None,
             prize: NearToken::from_yoctonear(0),
+            storage_reserve: NearToken::from_yoctonear(0),
             principal_total: NearToken::from_yoctonear(0),
             min_deposit: params.min_deposit_start,
             blocks: 0,
@@ -208,7 +227,10 @@ pub struct Contract {
 
 #[near]
 impl Contract {
+    /// Only the contract account itself may initialise, so nobody can front-run the deploy
+    /// with their own params. Deploy and init in one transaction.
     #[init]
+    #[private]
     pub fn new(params: Option<Params>) -> Self {
         let params = params.unwrap_or_else(Params::demo);
         params.check();
@@ -250,8 +272,18 @@ impl Contract {
         let before = env::storage_usage();
         let tent = self.tents.get(&key).unwrap_or(NearToken::from_yoctonear(0));
         self.tents.insert(&key, &tent.saturating_add(principal));
-        // The tower pays for the tent's storage.
-        let mut to_prize = to_pot.saturating_sub(storage_cost(before));
+        // The tower pays for the tent's storage. Params::check makes the minimum cover it.
+        let tent_storage = storage_cost(before);
+        require!(to_pot >= tent_storage, "block too small to cover its storage");
+        let mut to_prize = to_pot.saturating_sub(tent_storage);
+        // The round's first block sets aside the banner's storage.
+        let reserve = if self.round.blocks == 0 {
+            storage_bytes_cost(BANNER_STORAGE_BYTES)
+        } else {
+            NearToken::from_yoctonear(0)
+        };
+        require!(to_prize >= reserve, "block too small to cover the banner's storage");
+        to_prize = to_prize.saturating_sub(reserve);
 
         let prev = round_id - 1;
         match self.banners.get(&prev) {
@@ -265,6 +297,7 @@ impl Contract {
         let r = &mut self.round;
         r.leader = Some(account.clone());
         r.prize = r.prize.saturating_add(to_prize);
+        r.storage_reserve = r.storage_reserve.saturating_add(reserve);
         r.principal_total = r.principal_total.saturating_add(principal);
         r.blocks += 1;
         let grown = bps(r.min_deposit, p.growth_bps).saturating_add(r.min_deposit);
@@ -448,7 +481,6 @@ impl Contract {
     fn settle(&mut self, by: AccountId, hard_cap: bool, now: u64) -> TickResult {
         let round = self.round.clone();
         let winner = round.leader.clone().expect("leader checked in tick");
-        let reward = self.params.keeper_reward.min(bps_u128(round.prize, KEEPER_MAX_SHARE_BPS));
 
         let token_id = round.id.to_string();
         let extra = json!({
@@ -478,7 +510,7 @@ impl Contract {
         };
 
         let before = env::storage_usage();
-        // No refund account: the tower pays the banner's storage below, not the ringer.
+        // No refund account: the round's storage reserve pays the banner's storage below.
         self.nft.internal_mint_with_refund(token_id.clone(), winner.clone(), Some(metadata), None);
         let mut banner = Banner {
             prize: NearToken::from_yoctonear(0),
@@ -492,7 +524,14 @@ impl Contract {
             ended_by_hard_cap: hard_cap,
         };
         self.banners.insert(&round.id, &banner);
-        banner.prize = round.prize.saturating_sub(reward).saturating_sub(storage_cost(before));
+        // The reserve covers the worst case, so this never dips into principal. What it does
+        // not use joins the tower.
+        let available = round
+            .prize
+            .saturating_add(round.storage_reserve)
+            .saturating_sub(storage_cost(before));
+        let reward = self.params.keeper_reward.min(bps_u128(available, KEEPER_MAX_SHARE_BPS));
+        banner.prize = available.saturating_sub(reward);
         self.banners.insert(&round.id, &banner);
 
         NftMint { owner_id: &winner, token_ids: &[&token_id], memo: None }.emit();
@@ -531,8 +570,11 @@ fn bps_u128(amount: NearToken, bps: u128) -> NearToken {
 }
 
 fn storage_cost(before: u64) -> NearToken {
-    let used = env::storage_usage().saturating_sub(before);
-    env::storage_byte_cost().saturating_mul(u128::from(used))
+    storage_bytes_cost(env::storage_usage().saturating_sub(before))
+}
+
+fn storage_bytes_cost(bytes: u64) -> NearToken {
+    env::storage_byte_cost().saturating_mul(u128::from(bytes))
 }
 
 /// Roll in [0, 10000). The block seed is the same for every call in a block, so it is hashed
