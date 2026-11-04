@@ -31,15 +31,53 @@ fn call(who: &AccountId, deposit: NearToken, ms: u64, height: u64) {
         .build());
 }
 
+fn game() -> AccountId {
+    "lastflag.testnet".parse().unwrap()
+}
+
 fn setup(hazard_bps: u32) -> Contract {
-    call(&accounts(0), zero(), 0, 1);
-    // 1 NEAR blocks: at the 0.1 NEAR demo minimum, one block's fees do not cover a banner's storage.
-    Contract::new(Some(Params {
-        hazard_bps,
-        min_deposit_start: near(1),
-        min_deposit_cap: near(100),
-        ..Params::demo()
-    }))
+    call(&game(), zero(), 0, 1);
+    Contract::new(Some(Params { hazard_bps, ..Params::demo() }))
+}
+
+#[test]
+#[should_panic(expected = "first block's pot fee must cover")]
+fn params_must_cover_first_block_storage() {
+    call(&game(), zero(), 0, 1);
+    Contract::new(Some(Params { min_deposit_start: milli(100), ..Params::demo() }));
+}
+
+#[test]
+#[should_panic(expected = "first block's pot fee must cover")]
+fn zero_minimum_is_refused() {
+    call(&game(), zero(), 0, 1);
+    Contract::new(Some(Params { min_deposit_start: zero(), ..Params::demo() }));
+}
+
+#[test]
+#[should_panic(expected = "hard cap above 7 days")]
+fn hard_cap_must_be_bounded() {
+    call(&game(), zero(), 0, 1);
+    Contract::new(Some(Params { hard_cap_ms: u64::MAX, ..Params::demo() }));
+}
+
+#[test]
+fn one_minimum_block_round_pays_its_storage_from_fees() {
+    let mut c = setup(10_000);
+    // Longest account id: the most storage a tent and a banner can take.
+    let long: AccountId = "a".repeat(64).parse().unwrap();
+    let before = env::storage_usage();
+    call(&long, near(1), 0, 2);
+    c.deposit(1);
+    call(&long, zero(), 31_000, 3);
+    assert!(matches!(c.tick(), TickResult::Ended { .. }));
+    let storage = storage_cost(before);
+
+    let b = c.get_banner("1".to_string()).unwrap().banner;
+    let fees = milli(40); // 3% pot + 1% royalty, which goes to the tower in round 1
+    assert!(b.prize > zero());
+    assert!(b.prize.saturating_add(storage) <= fees, "storage was paid from principal");
+    assert_eq!(c.get_tent(1, long), Some(milli(960)));
 }
 
 /// Alice plants at t=0 and the strike lands right after grace.
