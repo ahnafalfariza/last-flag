@@ -9,3 +9,5 @@ dist/
 IDEAS.md
 LASTFLAG-DESIGN.md
 .vercel
+
+target/
