@@ -40,6 +40,7 @@ p, h1, h2 { margin: 0; }
 .stage .bg.lift, .howto .shot.lift { object-position: 50% 0; -webkit-mask-image: linear-gradient(transparent, #000 56px); mask-image: linear-gradient(transparent, #000 56px); }
 .stage .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.4s ease; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 .stage .bg.on { opacity: 1; }
+.stage .bg.fit { right: auto; bottom: auto; }
 .stage.day .bg.on { animation: breathe 70s ease-in-out infinite alternate; }
 @keyframes breathe { from { transform: scale(1); } to { transform: scale(1.045); } }
 .stage.shake { animation: shake 0.65s ease-out; }

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { campers, graceFraction, myStake, useGame } from '../game/store';
 import { near, short } from '../game/format';
-import { coverPoint, DAY, headroom, NIGHT, PHONE, PHONE_NIGHT, usePhone, useStageSize, type Landmarks } from './stage';
+import { DAY, fitRender, NIGHT, PHONE, PHONE_NIGHT, placePoint, usePhone, useInnerTop, useStageSize, type Landmarks, type Placement } from './stage';
 import { ActionTray } from './ActionTray';
 import { Tracker } from './Tracker';
 
@@ -18,6 +18,16 @@ const clock = (ms: number) => {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
+
+/** The flag's anchor stays at least this far down, clear of the header. */
+const HEADER_CLEAR = 105;
+/** The tents end at least this far above the bid bar, leaving room for the render's slow zoom. */
+const TRAY_GAP = 16;
+/** Tents closer than this (px) get their tags staggered. */
+const TAG_ROOM = 104;
+
+/** Box for a fitted render, in stage pixels. */
+const box = (p: Placement): CSSProperties => ({ left: p.x, top: p.y, width: p.w, height: p.h });
 
 const SEEN_KEY = 'lastflag.explainer.seen';
 const readSeen = () => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return false; } };
@@ -46,14 +56,15 @@ export function HillView() {
   const armed = round.state === 'Armed';
   const nightLm = phone ? PHONE_NIGHT : NIGHT;
   const lm: Landmarks = armed ? nightLm : phone ? PHONE : DAY;
-  // The day render has its flag near the top edge; push it down below the header and let sky fill the gap.
-  // Only just below: every px of lift also pushes the tents toward the bid bar.
-  const lift = phone ? 0 : headroom(DAY, size, 105);
-  const top = lm === DAY ? lift : 0;
-  const at = (p: [number, number]) => {
-    const q = coverPoint(lm, { w: size.w, h: size.h - top }, p, [0.5, top ? 0 : 0.5]);
-    return { ...q, y: q.y + top };
-  };
+  // Keep the flag below the header and the tents above the bid bar. The wide renders have scenery
+  // to spare around the original art, so the hill can shrink a little and still fill the screen.
+  const trayTop = useInnerTop(stageEl, '.bidbar') ?? size.h - 134;
+  const fit = (r: Landmarks) => (phone ? fitRender(r, size, -Infinity, Infinity) : fitRender(r, size, HEADER_CLEAR, trayTop - TRAY_GAP));
+  const dayLm = phone ? PHONE : DAY;
+  const dayFit = fit(dayLm);
+  const nightFit = fit(nightLm);
+  const place = armed ? nightFit : dayFit;
+  const at = (p: [number, number]) => placePoint(place, p);
 
   // Block drops: one per new deposit, falling onto the tower top.
   const [drops, setDrops] = useState<number[]>([]);
@@ -98,7 +109,7 @@ export function HillView() {
   const checks = armed && round.graceUntil !== null ? thunder.filter((t) => t.at >= round.graceUntil!).slice(0, 3) : [];
   const flagP = at(lm.flag);
   // On short screens the lifted tents can sit behind the bid bar; keep their tags just above it.
-  const tentY = (y: number) => (phone ? y : Math.min(y, size.h - 150));
+  const tentY = (y: number) => (phone ? y : Math.min(y, trayTop - 24));
   const latest = feed[0];
   const graceSecs = params.graceMs / 1000;
   const chance = params.hazardBps / 100;
@@ -107,8 +118,8 @@ export function HillView() {
 
   return (
     <div className={`stage ${armed ? 'night' : 'day'} ${shake ? 'shake' : ''}`} ref={setStageEl}>
-      <img className={`bg ${armed ? '' : 'on'} ${lift ? 'lift' : ''}`} src={phone ? PHONE.src : DAY.src} alt="" style={lift ? { top: lift, height: `calc(100% - ${lift}px)` } : undefined} />
-      <img className={`bg ${armed ? 'on' : ''}`} src={nightLm.src} alt="" />
+      <img className={`bg fit ${armed ? '' : 'on'}`} src={dayLm.src} alt="" style={box(dayFit)} />
+      <img className={`bg fit ${armed ? 'on' : ''}`} src={nightLm.src} alt="" style={box(nightFit)} />
       <div className="rain" style={{ opacity: armed ? 1 : 0 }} />
       <div className="flash" style={{ opacity: armed ? Math.min(0.9, flash * flash) : 0 }} />
       <svg className="bolts" width={size.w} height={size.h} aria-hidden="true">
@@ -131,11 +142,17 @@ export function HillView() {
       ))}
 
       {/* players, at the tents */}
-      {size.w > 0 && shown.map((c, i) => {
-        const p = at(lm.tents[i]);
-        const mine = c.account === me;
-        return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: tentY(p.y) }}>{mine ? 'You' : short(c.account)}</div>;
-      })}
+      {size.w > 0 && (() => {
+        // Tents close together would overlap their tags: lift every other crowded one a row.
+        let lifted = false;
+        return shown.map((c, i) => {
+          const p = at(lm.tents[i]);
+          const prev = i > 0 ? at(lm.tents[i - 1]) : null;
+          lifted = !!prev && Math.abs(p.x - prev.x) < TAG_ROOM && !lifted;
+          const mine = c.account === me;
+          return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: tentY(p.y) - (lifted ? 28 : 0) }}>{mine ? 'You' : short(c.account)}</div>;
+        });
+      })()}
       {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : tentY(p.y) }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
 
       {/* the one card that says what is happening */}
