@@ -34,7 +34,16 @@ export const accountColor = (account: string) => {
 
 export type Page = 'hill' | 'hall' | 'rules';
 
+/** `sim` runs the local simulator; `live` reads and writes the deployed contract. */
+export type Mode = 'sim' | 'live';
+
+/** Live actions resolve once the transaction lands; the simulator answers at once. */
+type Result<T> = T | Promise<T>;
+
 interface Store {
+  mode: Mode;
+  /** What the wallet is busy with, so buttons can wait. */
+  pending: string | null;
   params: Params;
   now: number;
   speed: number;
@@ -63,11 +72,12 @@ interface Store {
   skipGrace: () => void;
   dismissStrike: () => void;
 
-  deposit: (account: string, amount: number) => string | null;
-  tick: (by: string) => void;
-  withdraw: (roundId: number, account: string) => number;
-  claimTower: (bannerId: number) => void;
-  emptyChest: (bannerId: number) => void;
+  disconnect: () => void;
+  deposit: (account: string, amount: number) => Result<string | null>;
+  tick: (by: string) => Result<void>;
+  withdraw: (roundId: number, account: string) => Result<number>;
+  claimTower: (bannerId: number) => Result<void>;
+  emptyChest: (bannerId: number) => Result<void>;
   advance: (dtMs: number) => void;
 }
 
@@ -137,6 +147,8 @@ const seed = () => {
 const seeded = seed();
 
 export const useGame = create<Store>((set, get) => ({
+  mode: 'sim',
+  pending: null,
   params: PARAMS,
   now: 0,
   speed: 1,
@@ -158,6 +170,7 @@ export const useGame = create<Store>((set, get) => ({
   nextTickAt: 0,
 
   connect: () => set({ connected: true }),
+  disconnect: () => set({ connected: false }),
   setPage: (page) => set({ page }),
   setSpeed: (speed) => set({ speed }),
   toggleBots: () => set((s) => ({ botsOn: !s.botsOn })),
@@ -390,9 +403,12 @@ export const graceFraction = (round: Round, now: number, params: Params) => {
 };
 
 export const myStake = (round: Round, me: string) =>
-  round.deposits.filter((d) => d.account === me && !d.withdrawn).reduce((a, d) => a + d.principal, 0);
+  round.tents
+    ? round.tents.filter((t) => t.account === me).reduce((a, t) => a + t.principal, 0)
+    : round.deposits.filter((d) => d.account === me && !d.withdrawn).reduce((a, d) => a + d.principal, 0);
 
 export const campers = (round: Round) => {
+  if (round.tents) return round.tents.map((t) => ({ ...t }));
   const m = new Map<string, number>();
   for (const d of round.deposits) if (!d.withdrawn) m.set(d.account, (m.get(d.account) ?? 0) + d.principal);
   return [...m.entries()].map(([account, principal]) => ({ account, principal }));

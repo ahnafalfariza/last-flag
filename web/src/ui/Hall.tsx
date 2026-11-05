@@ -17,6 +17,21 @@ const RAIL = [
   { x0: 1650, x1: 1790, y0: 650, y1: 1150, ink: '#F2D27A' },
 ];
 
+/** No round has ended yet: the hall waits for its first banner. */
+function EmptyHall({ round }: { round: number }) {
+  return (
+    <main className="stage hall">
+      <img className="bg on" src={IMG.src} alt="" />
+      <section className="ledger" aria-labelledby="ledger-h">
+        <div className="ledger-head">
+          <h1 id="ledger-h">No banners yet</h1>
+          <span className="sub">The winner of round {round} gets the first one.</span>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 /** Trophy hall: the featured banner is the big one, older rounds hang on the rail. */
 export function Hall() {
   const banners = useGame((s) => s.banners);
@@ -31,13 +46,14 @@ export function Hall() {
   const pos: [number, number] = phone ? [0.3, 0.5] : [0.5, 0.5];
   const at = (x: number, y: number) => coverPoint(IMG, size, [x / IMG.w, y / IMG.h], pos);
 
-  const latestId = banners[banners.length - 1].id;
+  const latestId = banners.length ? banners[banners.length - 1].id : 0;
   const [featuredId, setFeaturedId] = useState(latestId);
   const [page, setPage] = useState(0);
   useEffect(() => { setFeaturedId(latestId); setPage(0); }, [latestId]);
 
   const featured = banners.find((b) => b.id === featuredId) ?? banners[banners.length - 1];
-  const rail = useMemo(() => banners.filter((b) => b.id !== featured.id).sort((a, b) => b.id - a.id), [banners, featured.id]);
+  const rail = useMemo(() => banners.filter((b) => b.id !== featured?.id).sort((a, b) => b.id - a.id), [banners, featured?.id]);
+  if (!featured) return <EmptyHall round={round.id} />;
   const pages = Math.max(1, Math.ceil(rail.length / RAIL.length));
   const hung = rail.slice(page * RAIL.length, page * RAIL.length + RAIL.length);
 
@@ -62,7 +78,7 @@ export function Hall() {
             <small style={{ fontSize: shield.s * 13 }}>LAST FLAG STANDING</small>
           </div>
           <div key={`u${featured.id}`} className="emb under-emb" style={{ left: under.x, top: under.y }}>
-            <b style={{ fontSize: Math.max(16, under.s * 44) }}>{featured.owner === me ? 'ahnaf.testnet' : featured.owner}</b>
+            <b style={{ fontSize: Math.max(16, under.s * 44) }}>{featured.owner}</b>
             <span style={{ fontSize: Math.max(11, under.s * 20) }}>{featured.blocks} blocks · {near(featured.principal, 1)} NEAR camped · {duration(featured.durationMs)}</span>
           </div>
           <div className="brass" style={{ left: chest.x, top: chest.y, fontSize: Math.max(10, chest.s * 20) }}>

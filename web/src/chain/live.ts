@@ -1,0 +1,339 @@
+import { useGame } from '../game/store';
+import { near, short } from '../game/format';
+import type { Banner, Deposit, FeedEvent, Params, Round, ThunderEvent } from '../game/types';
+import { CONTRACT_ID } from './config';
+import { balanceOf, toNear, view } from './rpc';
+import { panicText, restore, signIn, type Signer } from './signer';
+
+/**
+ * Live mode: the store is fed by polling the contract's views and its actions become wallet
+ * transactions. The UI doesn't know the difference, except that nothing here can run bots,
+ * skip the sun or change speed.
+ */
+
+/* ---------- contract JSON ---------- */
+
+type Yocto = string;
+
+interface ParamsJson {
+  min_deposit_start: Yocto; growth_bps: number; min_deposit_cap: Yocto; pot_fee_bps: number;
+  royalty_fee_bps: number; grace_ms: number; hazard_bps: number; hard_cap_ms: number; keeper_reward: Yocto;
+}
+interface RoundJson {
+  id: number; opened_at_ms: number; leader: string | null; prize: Yocto; principal_total: Yocto;
+  min_deposit: Yocto; blocks: number; last_deposit_at_ms: number; grace_until_ms: number;
+  hard_cap_at_ms: number; ticks: number; last_roll: number; tents_pitched: number;
+}
+interface RoundViewJson { round: RoundJson; status: string; hard_cap_reached: boolean; now_ms: number }
+interface BannerJson {
+  token_id: string; owner_id: string;
+  banner: {
+    prize: Yocto; claimed: boolean; chest: Yocto; chest_taken: Yocto; blocks: number; principal: Yocto;
+    duration_ms: number; won_at_ms: number; ended_by_hard_cap: boolean; ticks: number; struck_by: string;
+  };
+}
+interface TentJson { account_id: string; amount: Yocto }
+interface MyTentJson { round_id: number; amount: Yocto }
+type TickJson = { Continue: { roll: number } } | { Ended: { round_id: number; winner: string; prize: Yocto } };
+
+const toParams = (p: ParamsJson): Params => ({
+  minDepositStart: toNear(p.min_deposit_start),
+  growthBps: p.growth_bps,
+  minDepositCap: toNear(p.min_deposit_cap),
+  potFeeBps: p.pot_fee_bps,
+  royaltyFeeBps: p.royalty_fee_bps,
+  graceMs: p.grace_ms,
+  hazardBps: p.hazard_bps,
+  hardCapMs: p.hard_cap_ms,
+  yieldPerSec: 0, // no yield adapter on chain yet: the tower is fees only
+  keeperReward: toNear(p.keeper_reward),
+});
+
+const toBanner = (b: BannerJson): Banner => ({
+  id: Number(b.token_id),
+  owner: b.owner_id,
+  prize: toNear(b.banner.prize),
+  claimed: b.banner.claimed,
+  chest: toNear(b.banner.chest),
+  chestTaken: toNear(b.banner.chest_taken),
+  blocks: b.banner.blocks,
+  principal: toNear(b.banner.principal),
+  durationMs: b.banner.duration_ms,
+  wonAt: b.banner.won_at_ms,
+  endedBy: b.banner.ended_by_hard_cap ? 'hard cap' : 'strike',
+  ticks: b.banner.ticks,
+  struckBy: b.banner.struck_by,
+});
+
+/* ---------- state kept between polls ---------- */
+
+let signer: Signer | null = null;
+let clockOffset = 0; // chain ms minus local ms
+let last: RoundJson | null = null;
+let tents: TentJson[] = [];
+let myTents: MyTentJson[] = [];
+/** Who planted each block we watched land, per round. Blocks from before the page opened are unknown. */
+const seen = new Map<number, (string | null)[]>();
+let nextId = 1;
+const id = () => nextId++;
+
+const chainNow = () => Date.now() + clockOffset;
+const C = () => CONTRACT_ID!;
+const set = useGame.setState;
+const get = useGame.getState;
+
+const pushFeed = (kind: FeedEvent['kind'], text: string) =>
+  set((s) => ({ feed: [{ id: id(), at: chainNow(), kind, text }, ...s.feed].slice(0, 40) }));
+
+const who = (account: string | null) => (account && account === get().me ? 'You' : short(account));
+
+const stateOf = (r: RoundJson, now: number): Round['state'] =>
+  !r.leader ? 'Open' : now < r.grace_until_ms ? 'Live' : 'Armed';
+
+/**
+ * The contract keeps tents, not individual blocks, so the block list the tower and the sounds
+ * read is rebuilt: the blocks we saw land carry their planter, older ones borrow a tent owner.
+ */
+const blocksOf = (r: RoundJson): Deposit[] => {
+  const known = seen.get(r.id) ?? [];
+  const pool = tents.map((t) => t.account_id);
+  const fallback = (i: number) => pool.length ? pool[i % pool.length] : r.leader ?? '';
+  const offset = r.blocks - known.length;
+  return Array.from({ length: r.blocks }, (_, i) => {
+    const k = i - offset;
+    const account = (k >= 0 ? known[k] : null) ?? (i === r.blocks - 1 ? r.leader ?? '' : fallback(i));
+    return { id: r.id * 1_000_000 + i, account, amount: 0, principal: 0, at: r.opened_at_ms, withdrawn: false };
+  });
+};
+
+const toRound = (r: RoundJson, now: number): Round => {
+  const me = get().me;
+  const list = tents.map((t) => ({ account: t.account_id, principal: toNear(t.amount) }));
+  // The tent page holds the first 100 campers; make sure your own tent is never missing.
+  const mine = myTents.find((t) => t.round_id === r.id);
+  if (mine && get().connected && !list.some((t) => t.account === me)) list.push({ account: me, principal: toNear(mine.amount) });
+  return {
+    id: r.id,
+    state: stateOf(r, now),
+    leader: r.leader,
+    prize: toNear(r.prize),
+    principalTotal: toNear(r.principal_total),
+    deposits: blocksOf(r),
+    minDeposit: toNear(r.min_deposit),
+    lastDepositAt: r.leader ? r.last_deposit_at_ms : null,
+    graceUntil: r.leader ? r.grace_until_ms : null,
+    hardCapAt: r.leader ? r.hard_cap_at_ms : null,
+    openedAt: r.opened_at_ms,
+    ticks: r.ticks,
+    tents: list,
+  };
+};
+
+/** Past rounds where you still have a tent, for the "take back" buttons. */
+const settledRounds = (current: number): Round[] => {
+  const me = get().me;
+  const banners = get().banners;
+  return myTents
+    .filter((t) => t.round_id < current)
+    .map((t) => {
+      const b = banners.find((x) => x.id === t.round_id);
+      return {
+        id: t.round_id, state: 'Settled', leader: b?.owner ?? null, prize: b?.prize ?? 0, principalTotal: b?.principal ?? 0,
+        deposits: [], minDeposit: 0, lastDepositAt: null, graceUntil: null, hardCapAt: null, openedAt: 0,
+        ticks: b?.ticks ?? 0, tents: [{ account: me, principal: toNear(t.amount) }],
+      };
+    });
+};
+
+/* ---------- polling ---------- */
+
+let busy = false;
+let slowAt = 0;
+
+async function refreshSlow() {
+  const me = get().connected ? get().me : null;
+  const [banners, bal, mine] = await Promise.all([
+    view<BannerJson[]>(C(), 'get_banners', { limit: 100 }),
+    me ? balanceOf(me) : Promise.resolve(null),
+    me ? view<MyTentJson[]>(C(), 'get_tents_of', { account_id: me, rounds: 20 }) : Promise.resolve([]),
+  ]);
+  myTents = mine;
+  set({
+    banners: banners.map(toBanner).sort((a, b) => a.id - b.id),
+    ...(bal !== null ? { balance: toNear(bal) } : {}),
+  });
+}
+
+async function poll(force = false) {
+  if (busy) return;
+  busy = true;
+  try {
+    const v = await view<RoundViewJson>(C(), 'get_round');
+    clockOffset = v.now_ms - Date.now();
+    const r = v.round;
+    const prev = last;
+    const changed = !prev || prev.id !== r.id || prev.blocks !== r.blocks || prev.tents_pitched !== r.tents_pitched;
+    if (changed || force || Date.now() - slowAt > 5000) tents = await view<TentJson[]>(C(), 'get_tents', { round_id: r.id });
+    if (force || !prev || prev.id !== r.id || Date.now() - slowAt > 5000) {
+      slowAt = Date.now();
+      await refreshSlow();
+    }
+
+    const now = chainNow();
+    const p = get().params;
+    const thunder: ThunderEvent[] = [];
+    if (prev && prev.id === r.id) {
+      if (r.blocks > prev.blocks) {
+        const list = seen.get(r.id) ?? [];
+        for (let i = prev.blocks; i < r.blocks - 1; i++) list.push(null);
+        list.push(r.leader);
+        seen.set(r.id, list);
+        const n = r.blocks - prev.blocks;
+        pushFeed('flag', n === 1
+          ? `${who(r.leader)} bid ${near(toNear(prev.min_deposit))} NEAR and took the lead.`
+          : `${n} bids landed. ${who(r.leader)} leads.`);
+      }
+      if (r.ticks > prev.ticks && r.blocks === prev.blocks) {
+        thunder.push({ id: id(), at: now, roll: r.last_roll, threshold: p.hazardBps, struck: false, by: 'keeper' });
+      }
+    }
+    if (prev && prev.id !== r.id) {
+      const b = get().banners.find((x) => x.id === prev.id);
+      thunder.push({ id: id(), at: now, roll: 0, threshold: p.hazardBps, struck: true, by: b?.struckBy ?? 'keeper' });
+      if (b) {
+        set({ strike: { round: b.id, winner: b.owner, prize: b.prize, blocks: b.blocks, by: b.struckBy ?? '', at: now } });
+        pushFeed('strike', `Round ${b.id} is over. ${who(b.owner)} won ${near(b.prize)} NEAR.`);
+      }
+      pushFeed('open', `Round ${r.id} is open. Bid to take the lead.`);
+    }
+
+    last = r;
+    set((s) => ({
+      now,
+      round: toRound(r, now),
+      settled: settledRounds(r.id),
+      ...(thunder.length ? { thunder: [...thunder.reverse(), ...s.thunder].slice(0, 30), flash: 1 } : {}),
+    }));
+  } catch (e) {
+    console.warn('lastflag poll failed', e);
+  } finally {
+    busy = false;
+  }
+}
+
+/** Between polls: run the clock, fade the flash, and bring the storm in on time. */
+function frame() {
+  const s = get();
+  if (!last) return;
+  const now = chainNow();
+  const state = stateOf(last, now);
+  if (state === 'Armed' && s.round.state === 'Live' && s.round.id === last.id) {
+    pushFeed('storm', `Sudden death. Every check has a ${s.params.hazardBps / 100}% chance to end round ${last.id}.`);
+  }
+  set({ now, flash: Math.max(0, s.flash - 0.4), round: state === s.round.state ? s.round : { ...s.round, state } });
+}
+
+/* ---------- actions ---------- */
+
+async function send<T>(label: string, fn: (s: Signer) => Promise<T>): Promise<T> {
+  if (!signer) throw new Error('Connect a wallet first.');
+  set({ pending: label });
+  try {
+    return await fn(signer);
+  } finally {
+    set({ pending: null });
+    void poll(true);
+  }
+}
+
+const onSignedIn = (s: Signer) => {
+  signer = s;
+  set({ me: s.accountId, connected: true });
+  void poll(true);
+};
+
+export function startLive() {
+  set({
+    mode: 'live',
+    me: '',
+    balance: 0,
+    connected: false,
+    speed: 1,
+    botsOn: false,
+    keeperOn: false,
+    // Shown until the first poll answers.
+    round: {
+      id: 0, state: 'Open', leader: null, prize: 0, principalTotal: 0, deposits: [], minDeposit: 0,
+      lastDepositAt: null, graceUntil: null, hardCapAt: null, openedAt: 0, ticks: 0, tents: [],
+    },
+    banners: [],
+    settled: [],
+    thunder: [],
+    feed: [{ id: id(), at: 0, kind: 'info', text: `Live on ${CONTRACT_ID}.` }],
+
+    connect: () => {
+      signIn().then(onSignedIn, (e) => pushFeed('info', panicText(e)));
+    },
+    disconnect: () => {
+      void signer?.signOut();
+      signer = null;
+      set({ me: '', connected: false, balance: 0 });
+    },
+
+    deposit: async (_account, _amount) => {
+      if (!last) return 'Still loading the hill.';
+      // The contract charges the minimum when the bid lands and refunds the rest, so attach a
+      // little headroom in case someone else's bid lands first.
+      const attach = (BigInt(last.min_deposit) * 110n) / 100n;
+      try {
+        const charged = await send('deposit', (s) => s.call<Yocto>('deposit', { round_id: last!.id }, attach));
+        pushFeed('info', `Your flag is up. You paid ${near(toNear(charged ?? last!.min_deposit))} NEAR; the rest came back.`);
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
+    tick: async () => {
+      try {
+        const r = await send('tick', (s) => s.call<TickJson>('tick', {}, 0n, 150));
+        if (r && 'Continue' in r) pushFeed('thunder', `Your check rolled ${r.Continue.roll}. The round goes on.`);
+        if (r && 'Ended' in r) pushFeed('info', `Your check ended round ${r.Ended.round_id}. You earned the keeper reward.`);
+      } catch (e) {
+        pushFeed('info', panicText(e));
+      }
+    },
+    withdraw: async (roundId) => {
+      const amount = roundId === last?.id
+        ? toNear(tents.find((t) => t.account_id === get().me)?.amount ?? '0')
+        : toNear(myTents.find((t) => t.round_id === roundId)?.amount ?? '0');
+      try {
+        const ok = await send('withdraw', (s) => s.call<boolean>('withdraw', { round_id: roundId }));
+        if (ok === false) throw new Error('The transfer failed, your tent is still standing.');
+        pushFeed('tent', `You took back ${near(amount)} NEAR from round ${roundId}.`);
+        return amount;
+      } catch (e) {
+        pushFeed('info', panicText(e));
+        return 0;
+      }
+    },
+    // The contract pays the tower and the chest in one claim.
+    claimTower: (bannerId) => claim(bannerId),
+    emptyChest: (bannerId) => claim(bannerId),
+  });
+
+  const claim = async (bannerId: number) => {
+    try {
+      await send('claim', (s) => s.call<boolean>('claim_prize', { token_id: String(bannerId) }));
+      pushFeed('info', `You collected what Banner ${bannerId} held.`);
+    } catch (e) {
+      pushFeed('info', panicText(e));
+    }
+  };
+
+  view<ParamsJson>(C(), 'get_params').then((p) => set({ params: toParams(p) }), (e) => console.warn(e));
+  restore().then((s) => s && onSignedIn(s));
+  void poll(true);
+  const polling = setInterval(() => void poll(), 1000);
+  const clock = setInterval(frame, 100);
+  return () => { clearInterval(polling); clearInterval(clock); };
+}

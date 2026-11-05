@@ -1,0 +1,23 @@
+{
+  "name": "lastflag-keeper",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "wasm": "RUSTFLAGS='--cfg near' cargo build --manifest-path ../contracts/lastflag/Cargo.toml --target wasm32-unknown-unknown --release --target-dir ../contracts/lastflag/target/near-cfg",
+    "sandbox": "node src/sandbox.ts",
+    "keeper": "node src/keeper.ts",
+    "bots": "node src/bots.ts",
+    "deploy-game": "node src/deploy.ts",
+    "e2e": "node --test src/e2e.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0",
+    "near-sandbox": "0.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~7.0.2"
+  }
+}

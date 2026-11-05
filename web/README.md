@@ -3,7 +3,8 @@
 Playable prototype of the Last Flag frontend. The whole game runs in the browser against a
 local simulator (`src/game/store.ts`) that mirrors the contract's state machine: Open → Live →
 Armed → Settled, the 96 / 3 / 1 split, the growing minimum, the grace sun, the hazard bell,
-the hard cap, banners (trophies) and the chest (royalty). No chain calls yet.
+the hard cap, banners (trophies) and the chest (royalty). Set a contract and it plays the real
+one instead (live mode, below).
 
 ```bash
 pnpm install
@@ -11,6 +12,33 @@ pnpm dev
 ```
 
 Then open http://localhost:5173.
+
+## Live mode
+
+With `VITE_CONTRACT_ID` set (in `.env.local`), the store is fed by the contract's views, polled
+every second, and the actions become transactions signed through
+[near-connect](https://github.com/hot-dao/near-connect) (HOT, Meteor, MyNearWallet and others).
+`?sim` forces the simulator back. The demo panel becomes a badge with the contract id.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `VITE_CONTRACT_ID` | unset (simulator) | game contract |
+| `VITE_NETWORK` | `testnet` | `testnet`, `mainnet` or `sandbox` |
+| `VITE_RPC_URL` | FastNEAR for the network | |
+| `VITE_DEV_ACCOUNT`, `VITE_DEV_KEY` | | sandbox only: wallets can't reach a local node |
+
+To play the real contract on your machine: `cd ../keeper && pnpm sandbox`, then `pnpm keeper`,
+`pnpm bots`, and here `pnpm dev --mode sandbox` (reads the `.env.sandbox.local` the sandbox
+wrote).
+
+What differs from the simulator, because the contract works that way:
+
+- A bid always costs the current minimum. The tray shows one amount; 10% headroom is attached in
+  case another bid lands first, and the contract refunds what it didn't charge.
+- Claiming a banner pays the tower and the chest together.
+- The tower is fees only: there is no yield adapter on chain, and the rules page says so.
+- Blocks placed before the page opened are drawn with a camper's colour, since the contract keeps
+  tents, not a block-by-block history.
 
 ## Demo flow (under two minutes)
 
@@ -37,8 +65,9 @@ of each render. The low-poly Three.js hill is still in `src/scene/` behind `?sce
 
 ## Layout
 
-- `src/game/` simulator, types, formatting. Replace `store.ts` actions with contract calls
-  (`deposit`, `tick`, `withdraw`, `claim_prize`) and the view `get_round` to go live.
+- `src/game/` simulator, types, formatting.
+- `src/chain/` live mode: config, a fetch-only RPC for views, the wallet / sandbox-key signer, and
+  `live.ts`, which swaps the store's actions for contract calls and polls the views.
 - `src/scene/` React Three Fiber: terrain, instanced tower, waving flag, tents, sky bound to
   grace, storm (rain, torches, lightning bolts), camera rig.
 - `src/ui/` header, HUD plaques, action tray, side panel, Hall of Banners, rules, demo panel,

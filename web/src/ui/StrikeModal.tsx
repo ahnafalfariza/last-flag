@@ -22,7 +22,7 @@ export function StrikeModal() {
   const back = round ? myStake(round, me) : 0;
   const how = banner?.endedBy === 'hard cap'
     ? 'Sudden death hit its time limit'
-    : `Lightning hit on check ${round?.ticks ?? '?'}`;
+    : `Lightning hit on check ${banner?.ticks ?? round?.ticks ?? '?'}`;
 
   return (
     <div className="modal-bg" role="dialog" aria-modal="true" aria-labelledby="over-h">
@@ -41,7 +41,7 @@ export function StrikeModal() {
               <span>{mine && banner && !banner.claimed ? 'Prize and deposit ready' : 'Your deposit is ready'}</span>
               <b>{near(back + (mine && banner && !banner.claimed ? banner.prize : 0))} NEAR</b>
             </div>
-            <button onClick={() => { if (back > 0) withdraw(strike.round, me); if (mine) claimTower(strike.round); }}>Take it</button>
+            <button onClick={async () => { if (back > 0) await withdraw(strike.round, me); if (mine) await claimTower(strike.round); }}>Take it</button>
           </div>
         )}
         <div className="modal-actions">

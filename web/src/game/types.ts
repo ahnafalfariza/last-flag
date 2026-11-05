@@ -36,6 +36,11 @@ export interface Round {
   hardCapAt: number | null;
   openedAt: number;
   ticks: number;
+  /**
+   * Standing tents (principal per account). Live mode reads them from the contract, which
+   * keeps tents, not individual blocks. When absent, tents are summed from `deposits`.
+   */
+  tents?: { account: string; principal: number }[];
 }
 
 /** A trophy NFT, in hill words. */
@@ -53,6 +58,10 @@ export interface Banner {
   wonAt: number;
   /** Chance that ended it, as shown in the log. */
   endedBy: 'strike' | 'hard cap';
+  /** Checks run in the round, the last one included. */
+  ticks?: number;
+  /** Who ran the check that ended it. */
+  struckBy?: string;
 }
 
 export interface ThunderEvent {
