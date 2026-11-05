@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { Account, actions, JsonRpcProvider } from 'near-api-js';
 import { DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY, Sandbox } from 'near-sandbox';
-import { createSub, deployGame, WASM } from './deploy.ts';
+import { createSub, deployGame, fundYield, WASM } from './deploy.ts';
 import { sleep, yocto } from './lib.ts';
 
 /**
@@ -19,7 +19,7 @@ const GAS_SLACK = yocto(0.01);
 const params = (over: Record<string, string | number>) => ({
   min_deposit_start: NEAR.toString(), growth_bps: 500, min_deposit_cap: (5n * NEAR).toString(),
   pot_fee_bps: 300, royalty_fee_bps: 100, grace_ms: 2_000, hazard_bps: 10_000, hard_cap_ms: 60_000,
-  keeper_reward: (50n * NEAR / 1000n).toString(), ...over,
+  keeper_reward: (50n * NEAR / 1000n).toString(), yield_ppb_per_sec: 0, ...over,
 });
 
 let sandbox: Sandbox;
@@ -151,4 +151,24 @@ test('bells roll with block randomness, one per block, and the hard cap ends it'
   assert.equal(b.banner.ended_by_hard_cap, true);
   const mine = await view<{ round_id: number }[]>(id, 'get_tents_of', { account_id: carol.accountId });
   assert.deepEqual(mine.map((t) => t.round_id), [1]);
+});
+
+test('mock yield is paid from the funded reserve into the tower', async () => {
+  const id = await game({ hazard_bps: 10_000, grace_ms: 4_000, yield_ppb_per_sec: 100_000 });
+  await fundYield(root, id, 1);
+  const dave = (await createSub(root, 'dave', 20)).account;
+  await call(dave, id, 'deposit', { round_id: 1 }, NEAR);
+  const at = (await view<{ round: { prize: string } }>(id, 'get_round')).round.prize;
+  await sleep(4_500);
+  const v = await view<{ round: { prize: string; yield_paid: string }; yield_reserve: string }>(id, 'get_round');
+  // 0.96 NEAR camped at 0.01% a second for ~4.5 s is about 0.00043 NEAR.
+  const paid = BigInt(v.round.yield_paid);
+  assert.ok(paid > yocto(0.0003) && paid < yocto(0.0007), `yield paid ${near(paid)}`);
+  assert.equal(BigInt(v.round.prize) - BigInt(at), paid);
+  assert.equal(BigInt(v.yield_reserve), NEAR - paid);
+
+  const keeper = (await createSub(root, 'ringer2', 5)).account;
+  await call(keeper, id, 'tick', {});
+  const b = await view<{ banner: { yield_earned: string } }>(id, 'get_banner', { token_id: '1' });
+  assert.ok(BigInt(b.banner.yield_earned) >= paid, 'banner keeps the round yield');
 });

@@ -29,6 +29,11 @@ export async function deployGame(game: Account, wasmPath = WASM, params?: GamePa
   });
 }
 
+/** Adds `near` NEAR to the game's mock-yield reserve. Anyone can; it only ever pays yield. */
+export async function fundYield(from: Account, contractId: string, near: number) {
+  return from.callFunction({ contractId, methodName: 'fund_yield', args: {}, deposit: yocto(near), gas: 30n * 10n ** 12n });
+}
+
 /** Creates `<prefix>.<parent>` with a fresh full-access key and returns it ready to sign. */
 export async function createSub(parent: Account, prefix: string, near: number) {
   const accountId = `${prefix}.${parent.accountId}`;
@@ -45,6 +50,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const params = env.LASTFLAG_PARAMS ? (JSON.parse(env.LASTFLAG_PARAMS) as GameParams) : undefined;
   console.log(`deploying ${WASM} to ${accountId} on ${NETWORK}`);
   await deployGame(game, WASM, params);
+  if (env.LASTFLAG_YIELD_FUND) {
+    await fundYield(game, accountId, Number(env.LASTFLAG_YIELD_FUND));
+    console.log(`yield reserve funded with ${env.LASTFLAG_YIELD_FUND} NEAR`);
+  }
   console.log(await provider.callFunction({ contractId: accountId, method: 'get_round', args: {} }));
   console.log('done. Delete its full-access keys when you are happy, so nobody holds an upgrade key.');
 }

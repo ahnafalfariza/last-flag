@@ -343,3 +343,105 @@ fn round_view_carries_the_last_roll() {
     let r = c.get_round().round;
     assert_eq!((r.ticks, r.last_roll), (1, roll));
 }
+
+/// Yield on 0.96 NEAR of principal at the demo rate (20,000 ppb a second), in yocto per second.
+const YIELD_PER_SEC: u128 = 960_000_000_000_000_000_000_000 * 20_000 / 1_000_000_000;
+
+fn fund(c: &mut Contract, amount: NearToken, ms: u64, height: u64) {
+    call(&accounts(5), amount, ms, height);
+    c.fund_yield();
+}
+
+#[test]
+fn yield_accrues_from_the_reserve_while_a_flag_is_up() {
+    let mut c = setup(0);
+    fund(&mut c, near(10), 0, 2);
+    call(&accounts(1), near(1), 0, 3);
+    c.deposit(1);
+    let prize_at_bid = c.get_round().round.prize;
+
+    call(&accounts(2), zero(), 10_000, 4);
+    let v = c.get_round();
+    let owed = NearToken::from_yoctonear(YIELD_PER_SEC * 10);
+    assert_eq!(v.round.prize, prize_at_bid.saturating_add(owed));
+    assert_eq!(v.round.yield_paid, owed);
+    assert_eq!(v.yield_reserve, near(10).saturating_sub(owed));
+}
+
+#[test]
+fn no_reserve_no_yield() {
+    let mut c = setup(0);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    let prize = c.get_round().round.prize;
+    call(&accounts(2), zero(), 60_000, 3);
+    assert_eq!(c.get_round().round.prize, prize);
+}
+
+#[test]
+fn yield_never_exceeds_the_reserve() {
+    let mut c = setup(0);
+    fund(&mut c, NearToken::from_yoctonear(1_000), 0, 2);
+    call(&accounts(1), near(1), 0, 3);
+    c.deposit(1);
+    call(&accounts(2), zero(), 60_000, 4);
+    let v = c.get_round();
+    assert_eq!(v.round.yield_paid, NearToken::from_yoctonear(1_000));
+    assert_eq!(v.yield_reserve, zero());
+}
+
+#[test]
+fn yield_stops_at_the_hard_cap() {
+    let mut c = setup(0);
+    fund(&mut c, near(10), 0, 2);
+    call(&accounts(1), near(1), 0, 3);
+    c.deposit(1);
+    // Hard cap is 5 minutes; an hour later nobody has rung the bell.
+    call(&accounts(2), zero(), 3_600_000, 4);
+    assert_eq!(c.get_round().round.yield_paid, NearToken::from_yoctonear(YIELD_PER_SEC * 300));
+}
+
+#[test]
+fn banner_keeps_the_yield_its_round_earned() {
+    let mut c = setup(10_000);
+    fund(&mut c, near(10), 0, 2);
+    call(&accounts(1), near(1), 0, 3);
+    c.deposit(1);
+    call(&accounts(2), zero(), 31_000, 4);
+    assert!(matches!(c.tick(), TickResult::Ended { .. }));
+    let b = c.get_banner("1".to_string()).unwrap().banner;
+    assert_eq!(b.yield_earned, NearToken::from_yoctonear(YIELD_PER_SEC * 31));
+    // The next round starts its own clock: nothing owed until a flag goes up.
+    call(&accounts(2), zero(), 90_000, 5);
+    assert_eq!(c.get_round().round.yield_paid, zero());
+}
+
+#[test]
+fn packing_up_settles_yield_before_principal_leaves() {
+    let mut c = setup(0);
+    fund(&mut c, near(10), 0, 2);
+    call(&accounts(1), near(1), 0, 3);
+    c.deposit(1);
+    call(&accounts(2), near(2), 0, 4);
+    c.deposit(1);
+    // Two tents camped for 10 s, then one leaves.
+    call(&accounts(1), zero(), 10_000, 5);
+    let _ = c.withdraw(1);
+    let both = 960_000_000_000_000_000_000_000u128 + 1_008_000_000_000_000_000_000_000;
+    let paid = c.get_round().round.yield_paid.as_yoctonear();
+    assert_eq!(paid, both * 20_000 / 1_000_000_000 * 10);
+}
+
+#[test]
+#[should_panic(expected = "attach the NEAR to add")]
+fn funding_needs_a_deposit() {
+    let mut c = setup(0);
+    fund(&mut c, zero(), 0, 2);
+}
+
+#[test]
+#[should_panic(expected = "yield above 0.1% a second")]
+fn yield_rate_is_bounded() {
+    call(&game(), zero(), 0, 1);
+    Contract::new(Some(Params { yield_ppb_per_sec: 2_000_000, ..Params::demo() }));
+}

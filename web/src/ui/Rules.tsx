@@ -44,7 +44,7 @@ const SHOTS: Shot[] = [
     key: 'win', title: 'The win', src: '/img/hill_night.jpg', focus: [0.63, 0.36], zoom: 1.5, night: true, flash: true,
     line: 'Lightning strikes. Whoever leads wins the prize.',
     sub: (p) => p.yieldPerSec > 0
-      ? 'The prize is the fees from every bid, plus the staking yield everyone\'s deposits earned while the round ran.'
+      ? 'The prize is the fees from every bid, plus the yield everyone\'s deposits earn while the round runs.'
       : 'The prize is the fees from every bid in the round.',
     fact: (p) => `always ends within ${p.hardCapMs / 60000} min of the last bid`,
   },
@@ -57,7 +57,7 @@ const SHOTS: Shot[] = [
   {
     key: 'deposit', title: 'Your deposit', src: '/img/hill_day.jpg', focus: [0.25, 0.95], zoom: 1.5,
     line: 'Everyone gets their money back.',
-    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every bid is your deposit. It${p.yieldPerSec > 0 ? "'s staked while you wait and" : ''} comes back in full after the round. If you're not in the lead, you can withdraw any time.`,
+    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every bid is your deposit. It${p.yieldPerSec > 0 ? ' earns yield for the prize while you wait and' : ''} comes back in full after the round. If you're not in the lead, you can withdraw any time.`,
     fact: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of each bid comes back`,
   },
 ];

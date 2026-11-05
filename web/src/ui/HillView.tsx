@@ -169,7 +169,8 @@ export function HillView() {
         ) : (
           <div className="who">
             <span className="sub-l">{armed ? <>If it ends now, <b>{leading ? 'you win' : `${leader} wins`}</b></> : <><b>{leader}</b> {leading ? "are in the lead and would win" : 'is in the lead and would win'}</>}</span>
-            <span className="prize">{near(round.prize)} NEAR</span>
+            {/* With yield on, the tower grows by fractions of a cent a second: show enough digits to see it. */}
+            <span className="prize">{near(round.prize, params.yieldPerSec > 0 ? 4 : 2)} NEAR</span>
           </div>
         )}
         {round.state === 'Live' && round.graceUntil !== null && (

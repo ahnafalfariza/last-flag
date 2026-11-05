@@ -32,6 +32,8 @@ const BANNER_STORAGE_BYTES: u64 = 1_300;
 const MAX_HARD_CAP_MS: u64 = 7 * 24 * 60 * 60_000;
 /// Most entries one list view returns.
 const MAX_PAGE: u32 = 100;
+/// Highest mock yield `new` accepts: 0.1% of principal per second.
+const MAX_YIELD_PPB_PER_SEC: u32 = 1_000_000;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -66,6 +68,10 @@ pub struct Params {
     pub hard_cap_ms: u64,
     /// Paid from the tower to whoever rings the bell that brings the strike.
     pub keeper_reward: NearToken,
+    /// Mock yield: parts per billion of the round's principal added to the tower each second,
+    /// paid out of the yield reserve (see `fund_yield`). 0 turns it off.
+    #[serde(default)]
+    pub yield_ppb_per_sec: u32,
 }
 
 impl Params {
@@ -82,6 +88,8 @@ impl Params {
             hazard_bps: 500,
             hard_cap_ms: 5 * 60_000,
             keeper_reward: NearToken::from_millinear(50),
+            // 0.002% of principal a second: 20 NEAR camped earns about 0.12 NEAR in 5 minutes.
+            yield_ppb_per_sec: 20_000,
         }
     }
 
@@ -94,6 +102,7 @@ impl Params {
         require!(self.hard_cap_ms > self.grace_ms, "hard cap must outlast grace");
         require!(self.hard_cap_ms <= MAX_HARD_CAP_MS, "hard cap above 7 days");
         require!(self.min_deposit_cap >= self.min_deposit_start, "cap below start");
+        require!(self.yield_ppb_per_sec <= MAX_YIELD_PPB_PER_SEC, "yield above 0.1% a second");
         // The first block of a round pays its own tent and sets aside the banner's storage,
         // so settling never spends principal. This also rules out a zero minimum.
         let first_block_storage = storage_bytes_cost(TENT_STORAGE_BYTES + BANNER_STORAGE_BYTES);
@@ -126,6 +135,10 @@ pub struct Round {
     /// Tents pitched this round, counting a re-pitch after packing up. Next index in the tent
     /// index.
     pub tents_pitched: u32,
+    /// Mock yield is paid into the tower up to this time.
+    pub yield_from_ms: u64,
+    /// Mock yield paid into this round's tower so far.
+    pub yield_paid: NearToken,
 }
 
 impl Round {
@@ -146,6 +159,8 @@ impl Round {
             ticks: 0,
             last_roll: 0,
             tents_pitched: 0,
+            yield_from_ms: now_ms,
+            yield_paid: NearToken::from_yoctonear(0),
         }
     }
 
@@ -171,6 +186,8 @@ pub struct Banner {
     pub ticks: u32,
     /// Who rang the striking bell.
     pub struck_by: AccountId,
+    /// Mock yield included in `prize`.
+    pub yield_earned: NearToken,
 }
 
 #[near(serializers = [json])]
@@ -180,6 +197,9 @@ pub struct RoundView {
     pub status: String,
     pub hard_cap_reached: bool,
     pub now_ms: u64,
+    /// Left to pay mock yield from. `round.prize` and `round.yield_paid` already include the
+    /// yield owed up to `now_ms`.
+    pub yield_reserve: NearToken,
 }
 
 #[near(serializers = [json])]
@@ -239,6 +259,8 @@ pub enum Event {
     TentPacked { round_id: u64, account_id: AccountId, amount: NearToken },
     #[event_version("1.0.0")]
     PrizeClaimed { token_id: TokenId, account_id: AccountId, tower: NearToken, chest: NearToken },
+    #[event_version("1.0.0")]
+    YieldFunded { by: AccountId, amount: NearToken, reserve: NearToken },
 }
 
 #[near(contract_state)]
@@ -252,6 +274,8 @@ pub struct Contract {
     nft: NonFungibleToken,
     /// (round, n) -> account of the n-th tent pitched in that round, so views can list tents.
     tent_index: LookupMap<(u64, u32), AccountId>,
+    /// Real NEAR set aside to pay mock yield. Never mixed with principal or prizes.
+    yield_reserve: NearToken,
 }
 
 #[near]
@@ -277,6 +301,7 @@ impl Contract {
                 Some(StorageKey::NftApprovals),
             ),
             tent_index: LookupMap::new(StorageKey::TentIndex),
+            yield_reserve: NearToken::from_yoctonear(0),
         }
     }
 
@@ -292,6 +317,7 @@ impl Contract {
         require!(!self.round.hard_cap_reached(now), "hard cap reached, the round is ending");
         let charge = self.round.min_deposit;
         require!(attached >= charge, format!("below current minimum of {charge}"));
+        self.accrue_yield(now);
 
         let p = &self.params;
         let to_pot = bps(charge, p.pot_fee_bps);
@@ -368,6 +394,8 @@ impl Contract {
         let hard_cap = r.hard_cap_reached(now);
         require!(hard_cap || now >= r.grace_until_ms, "the sun is still up");
         require!(height > r.last_roll_height, "the bell already rang this block");
+        self.accrue_yield(now);
+        let r = &mut self.round;
         r.last_roll_height = height;
         r.ticks += 1;
 
@@ -397,6 +425,7 @@ impl Contract {
             .remove(&(round_id, account.clone()))
             .unwrap_or_else(|| env::panic_str("no tent in that round"));
         if current {
+            self.accrue_yield(env::block_timestamp_ms());
             self.round.principal_total = self.round.principal_total.saturating_sub(amount);
         }
         Event::TentPacked { round_id, account_id: account.clone(), amount }.emit();
@@ -469,6 +498,18 @@ impl Contract {
         false
     }
 
+    /// Top up the mock-yield reserve. Anyone can; on testnet the deployer does, so the tower
+    /// visibly grows while principal is camped. The reserve only ever pays yield.
+    #[payable]
+    pub fn fund_yield(&mut self) -> NearToken {
+        let amount = env::attached_deposit();
+        require!(!amount.is_zero(), "attach the NEAR to add");
+        self.accrue_yield(env::block_timestamp_ms());
+        self.yield_reserve = self.yield_reserve.saturating_add(amount);
+        Event::YieldFunded { by: env::predecessor_account_id(), amount, reserve: self.yield_reserve }.emit();
+        self.yield_reserve
+    }
+
     pub fn get_params(&self) -> Params {
         self.params.clone()
     }
@@ -481,11 +522,17 @@ impl Contract {
             Some(_) if now < r.grace_until_ms => "Live",
             Some(_) => "Armed",
         };
+        // Show the yield owed up to now, as the next call will pay it.
+        let owed = self.yield_owed(now);
+        let mut round = r.clone();
+        round.prize = round.prize.saturating_add(owed);
+        round.yield_paid = round.yield_paid.saturating_add(owed);
         RoundView {
-            round: r.clone(),
+            round,
             status: status.to_string(),
             hard_cap_reached: r.hard_cap_reached(now),
             now_ms: now,
+            yield_reserve: self.yield_reserve.saturating_sub(owed),
         }
     }
 
@@ -595,6 +642,7 @@ impl Contract {
             ended_by_hard_cap: hard_cap,
             ticks: round.ticks,
             struck_by: by.clone(),
+            yield_earned: round.yield_paid,
         };
         self.banners.insert(&round.id, &banner);
         // The reserve covers the worst case, so this never dips into principal. What it does
@@ -623,6 +671,33 @@ impl Contract {
         }
         self.round = Round::open(round.id + 1, now, &self.params);
         TickResult::Ended { round_id: round.id, winner, prize: banner.prize }
+    }
+
+    /// Mock yield owed since the last payment, capped by the reserve. Accrues only while there
+    /// is a flag on the hill, and not past the hard cap: a round nobody ends stops earning.
+    fn yield_owed(&self, now: u64) -> NearToken {
+        let r = &self.round;
+        if r.leader.is_none() || self.params.yield_ppb_per_sec == 0 {
+            return NearToken::from_yoctonear(0);
+        }
+        let until = now.min(r.hard_cap_at_ms);
+        let ms = until.saturating_sub(r.yield_from_ms);
+        // Per second first, so a large principal over a long round can't overflow.
+        let per_sec = r.principal_total.as_yoctonear() * u128::from(self.params.yield_ppb_per_sec) / 1_000_000_000;
+        let due = per_sec.saturating_mul(u128::from(ms)) / 1_000;
+        NearToken::from_yoctonear(due.min(self.yield_reserve.as_yoctonear()))
+    }
+
+    /// Moves the owed mock yield from the reserve into the tower.
+    fn accrue_yield(&mut self, now: u64) {
+        let owed = self.yield_owed(now);
+        self.yield_reserve = self.yield_reserve.saturating_sub(owed);
+        let r = &mut self.round;
+        r.prize = r.prize.saturating_add(owed);
+        r.yield_paid = r.yield_paid.saturating_add(owed);
+        // Paid up to now, or to the hard cap once it has passed: owed time never counts twice.
+        let until = if r.leader.is_some() { now.min(r.hard_cap_at_ms) } else { now };
+        r.yield_from_ms = r.yield_from_ms.max(until);
     }
 
     fn pay(&self, account: AccountId, payout: Payout, amount: NearToken) -> Promise {

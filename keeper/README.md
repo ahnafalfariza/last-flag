@@ -19,8 +19,10 @@ cd ../web && pnpm dev --mode sandbox
 `pnpm sandbox` writes `web/.env.sandbox.local` and `keeper/.env.sandbox.json` (both git-ignored)
 with the contract id and throwaway keys for `player.sandbox`, `keeper.sandbox` and the bots. The
 browser signs as `player.sandbox` with that key, since wallets can't reach a local node.
-`FAST=1 pnpm sandbox` uses a 10 s sun, 10% hazard and a 2 minute hard cap. Ctrl-C stops the node
-and deletes its state.
+`FAST=1 pnpm sandbox` uses a 10 s sun, 10% hazard, a 2 minute hard cap and faster yield. The yield
+reserve starts with 50 NEAR, so the tower grows while players camp. Ctrl-C stops the node and
+deletes its state. To run a second world beside the first, use
+`SANDBOX_PORT=3031 SANDBOX_MODE=sandbox2 pnpm sandbox`, then `pnpm dev --mode sandbox2` in `web/`.
 
 ## Tests on a real node
 
@@ -44,7 +46,8 @@ LASTFLAG_CONTRACT=lastflag.you.testnet pnpm bots
 
 Keys come from `<ROLE>_KEY` or from near-cli's legacy keychain,
 `~/.near-credentials/testnet/<account>.json`. `deploy-game` must be signed by the contract
-account itself (`new` is private). Pass `LASTFLAG_PARAMS='{...}'` to override the demo params.
+account itself (`new` is private). Pass `LASTFLAG_PARAMS='{...}'` to override the demo params, and
+`LASTFLAG_YIELD_FUND=5` to put 5 NEAR in the mock-yield reserve in the same run.
 `bots setup` creates six sub-accounts of the funder with `BOT_FUND` NEAR each (default 15) and
 saves their keys to `.bots.testnet.json`.
 
