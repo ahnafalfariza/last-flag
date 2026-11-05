@@ -60,6 +60,7 @@ p, h1, h2 { margin: 0; }
 .tag.anchor { transform: translate(-50%, -50%); transition: left 0.6s ease, top 0.6s ease; }
 /* beside the flag, not on it */
 .tag.anchor.lead { transform: translate(0, -50%); }
+.tag.anchor.lead.flip { transform: translate(-100%, -50%); }
 .tag-me { background: rgba(46, 111, 216, 0.85); }
 
 /* header: floating game HUD pieces, no bar */
@@ -167,7 +168,13 @@ p, h1, h2 { margin: 0; }
 .checks .hit { color: var(--red); }
 .details .ghost { align-self: flex-start; padding: 0 16px; }
 
-.col-right { position: absolute; right: 28px; top: 104px; z-index: 4; width: 340px; display: flex; flex-direction: column; gap: 12px; }
+.col-right { position: absolute; right: 28px; top: 104px; z-index: 4; width: 340px; max-height: calc(var(--tray-top, 100%) - 104px - 16px); display: flex; flex-direction: column; gap: 12px; }
+/* short screens: the explainer gives up its room first, then the deposit card; each scrolls */
+.col-right > * { min-height: 0; overflow-y: auto; }
+.col-right > .explain { flex: 0 1000 auto; min-height: 120px; }
+.col-right > .deposit { flex: 0 1 auto; }
+/* too short for both (a phone on its side): drop the explainer, as phones do */
+@media (max-height: 480px) { .col-right > .explain { display: none; } }
 .explain { padding: 20px 22px; border-radius: 20px; background: #fffaf0; color: #2b2116; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 6px 0 #c99a35, 0 14px 30px rgba(0, 0, 0, 0.35); }
 .explain h2 { font: 600 20px var(--display); }
 .explain ol { margin: 0; padding: 0; list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 12px; font-size: 15px; font-weight: 600; line-height: 1.45; }
@@ -219,8 +226,8 @@ p, h1, h2 { margin: 0; }
 .split .blue { color: #9fd8ff; }
 .toast { position: absolute; left: 28px; bottom: calc(100% + 10px); padding: 10px 14px; border-radius: 10px; background: var(--red); color: #2b1410; font-weight: 800; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4); }
 
-/* demo controls */
-.demo { position: absolute; right: 24px; bottom: calc(var(--tray-h) + 14px); z-index: 7; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; background: rgba(14, 18, 26, 0.55); border: 1px dashed rgba(255, 255, 255, 0.25); border-radius: 12px; }
+/* demo controls, under the right column so they never cover a Withdraw button */
+.demo { position: absolute; right: 24px; bottom: calc(var(--tray-h) + 14px); z-index: 3; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; background: rgba(14, 18, 26, 0.55); border: 1px dashed rgba(255, 255, 255, 0.25); border-radius: 12px; }
 .demo .label { font-size: 10px; }
 .demo-row { display: flex; gap: 5px; flex-wrap: wrap; }
 .demo button { min-height: 26px; padding: 0 9px; border-radius: 13px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.08); font-size: 11px; font-weight: 800; }
@@ -386,7 +393,7 @@ p, h1, h2 { margin: 0; }
   .danger { padding: 10px 12px; gap: 4px; }
   .danger b { font-size: 18px; }
   .danger p { font-size: 13px; }
-  .col-right { left: 12px; right: 12px; top: auto; bottom: calc(var(--tray-h) + 8px); width: auto; }
+  .col-right { left: 12px; right: 12px; top: auto; bottom: calc(var(--tray-h) + 8px); width: auto; max-height: none; }
   .deposit { padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px; }
   .deposit .amt { font-size: 22px; grid-column: 1; }
   .deposit .note { display: none; }
