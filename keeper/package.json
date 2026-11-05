@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "wasm": "RUSTFLAGS='--cfg near' cargo build --manifest-path ../contracts/lastflag/Cargo.toml --target wasm32-unknown-unknown --release --target-dir ../contracts/lastflag/target/near-cfg",
+    "wasm": "pnpm wasm:game && pnpm wasm:vanisher",
+    "wasm:game": "RUSTFLAGS='--cfg near' cargo build --manifest-path ../contracts/lastflag/Cargo.toml --target wasm32-unknown-unknown --release --target-dir ../contracts/lastflag/target/near-cfg",
+    "wasm:vanisher": "RUSTFLAGS='--cfg near' cargo build --manifest-path ../contracts/vanisher/Cargo.toml --target wasm32-unknown-unknown --release --target-dir ../contracts/vanisher/target/near-cfg",
     "sandbox": "node src/sandbox.ts",
     "keeper": "node src/keeper.ts",
     "bots": "node src/bots.ts",
