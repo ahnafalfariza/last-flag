@@ -51,6 +51,9 @@ export function HillView() {
 
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
   const size = useStageSize(stageEl);
+  const [leadEl, setLeadEl] = useState<HTMLDivElement | null>(null);
+  const [colEl, setColEl] = useState<HTMLDivElement | null>(null);
+  const [statusEl, setStatusEl] = useState<HTMLElement | null>(null);
   const [seen, setSeen] = useState(readSeen);
   const [details, setDetails] = useState(false);
   const armed = round.state === 'Armed';
@@ -108,6 +111,16 @@ export function HillView() {
   const extra = camp.length - shown.length;
   const checks = armed && round.graceUntil !== null ? thunder.filter((t) => t.at >= round.graceUntil!).slice(0, 3) : [];
   const flagP = at(lm.flag);
+  // The leader tag sits right of the flag. If the right column is in the way, flip it left of the flag;
+  // if the status card is in the way there too, hide it (the status card already names the leader).
+  const leadGap = phone ? 16 : 26;
+  let leadSide: 'right' | 'left' | 'none' = 'right';
+  if (!phone && leadEl && colEl && statusEl && colEl.offsetHeight > 0) {
+    const w = leadEl.offsetWidth;
+    if (flagP.x + leadGap + w > colEl.offsetLeft - 8) {
+      leadSide = flagP.x - leadGap - w >= statusEl.offsetLeft + statusEl.offsetWidth + 8 ? 'left' : 'none';
+    }
+  }
   // On short screens the lifted tents can sit behind the bid bar; keep their tags just above it.
   const tentY = (y: number) => (phone ? y : Math.min(y, trayTop - 24));
   const latest = feed[0];
@@ -117,7 +130,8 @@ export function HillView() {
   const dismiss = () => { writeSeen(); setSeen(true); };
 
   return (
-    <div className={`stage ${armed ? 'night' : 'day'} ${shake ? 'shake' : ''}`} ref={setStageEl}>
+    // --tray-top caps the right column so the deposit card never slides under the bid bar.
+    <div className={`stage ${armed ? 'night' : 'day'} ${shake ? 'shake' : ''}`} ref={setStageEl} style={{ '--tray-top': `${trayTop}px` } as CSSProperties}>
       <img className={`bg fit ${armed ? '' : 'on'}`} src={dayLm.src} alt="" style={box(dayFit)} />
       <img className={`bg fit ${armed ? 'on' : ''}`} src={nightLm.src} alt="" style={box(nightFit)} />
       <div className="rain" style={{ opacity: armed ? 1 : 0 }} />
@@ -132,7 +146,7 @@ export function HillView() {
 
       {/* who leads, on the tower */}
       {round.leader && size.w > 0 && (
-        <div className={`tag anchor lead ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x + (phone ? 16 : 26), top: Math.max(flagP.y, phone ? 345 : 118) }}>
+        <div ref={setLeadEl} className={`tag anchor lead ${leadSide === 'left' ? 'flip' : ''} ${leading ? 'tag-me' : ''}`} style={{ left: flagP.x + (leadSide === 'left' ? -leadGap : leadGap), top: Math.max(flagP.y, phone ? 345 : 118), visibility: leadSide === 'none' ? 'hidden' : undefined }}>
           {leading ? "You're leading" : `${leader} is leading`}
         </div>
       )}
@@ -156,7 +170,7 @@ export function HillView() {
       {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : tentY(p.y) }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
 
       {/* the one card that says what is happening */}
-      <section className={`card status-card ${armed ? 'armed' : ''}`} aria-label="Round status">
+      <section ref={setStatusEl} className={`card status-card ${armed ? 'armed' : ''}`} aria-label="Round status">
         <Tracker state={round.state} />
         {round.state === 'Open' ? (
           <>
@@ -212,7 +226,7 @@ export function HillView() {
         )}
       </section>
 
-      <div className="col-right">
+      <div ref={setColEl} className="col-right">
         {!seen && !phone && (
           <aside className="explain" aria-labelledby="explain-h">
             <h2 id="explain-h">New here? A round in 3 steps</h2>
