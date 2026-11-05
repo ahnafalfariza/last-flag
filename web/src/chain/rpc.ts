@@ -40,6 +40,16 @@ export async function balanceOf(accountId: string): Promise<bigint> {
   return BigInt(r.amount);
 }
 
+/** Whether an account has a contract deployed. Throws if the account doesn't exist. */
+export async function hasContract(accountId: string): Promise<boolean> {
+  const r = await rpc<{ code_hash: string }>('query', {
+    request_type: 'view_account',
+    finality: 'optimistic',
+    account_id: accountId,
+  });
+  return r.code_hash !== '11111111111111111111111111111111';
+}
+
 const YOCTO = 10n ** 24n;
 
 /** yoctoNEAR string to NEAR as a float, for display. Exact to 1e-6 NEAR. */

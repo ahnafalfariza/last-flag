@@ -26,6 +26,8 @@ every second, and the actions become transactions signed through
 | `VITE_NETWORK` | `testnet` | `testnet`, `mainnet` or `sandbox` |
 | `VITE_RPC_URL` | FastNEAR for the network | |
 | `VITE_DEV_ACCOUNT`, `VITE_DEV_KEY` | | sandbox only: wallets can't reach a local node |
+| `VITE_MARKETPLACE_ID` | unset | marketplace "Sell" suggests |
+| `VITE_MARKETPLACE_MSG` | `{"sale_conditions":"{price}"}` | approval message; `{price}` becomes the price in yocto |
 
 To play the real contract on your machine: `cd ../keeper && pnpm sandbox`, then `pnpm keeper`,
 `pnpm bots`, and here `pnpm dev --mode sandbox` (reads the `.env.sandbox.local` the sandbox
@@ -36,6 +38,10 @@ What differs from the simulator, because the contract works that way:
 - A bid always costs the current minimum. The tray shows one amount; 10% headroom is attached in
   case another bid lands first, and the contract refunds what it didn't charge.
 - Claiming a banner pays the tower and the chest together.
+- In the Hall, the holder can hand the banner over (`nft_transfer`), sell it (approve a marketplace that
+  settles through NEP-199 `nft_transfer_payout`; the message is only sent if that account has a
+  contract), or cancel the listing (`nft_revoke_all`). Claims wait while it is listed, as the contract
+  requires.
 - The tower grows from fees and from the contract's mock yield, paid from its funded reserve. Between
   polls the page adds the yield owed, so the prize keeps ticking up. It shows 4 decimals while yield is on.
 - Blocks placed before the page opened are drawn with a camper's colour, since the contract keeps

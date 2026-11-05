@@ -1,8 +1,8 @@
 import { useGame } from '../game/store';
 import { near, short } from '../game/format';
 import type { Banner, Deposit, FeedEvent, Params, Round, ThunderEvent } from '../game/types';
-import { CONTRACT_ID } from './config';
-import { balanceOf, toNear, view } from './rpc';
+import { CONTRACT_ID, MARKETPLACE_MSG } from './config';
+import { balanceOf, hasContract, toNear, view } from './rpc';
 import { panicText, restore, signIn, type Signer } from './signer';
 
 /**
@@ -34,6 +34,7 @@ interface BannerJson {
   };
 }
 interface TentJson { account_id: string; amount: Yocto }
+interface TokenJson { token_id: string; owner_id: string; approved_account_ids?: Record<string, number> | null }
 interface MyTentJson { round_id: number; amount: Yocto }
 type TickJson = { Continue: { roll: number } } | { Ended: { round_id: number; winner: string; prize: Yocto } };
 
@@ -156,14 +157,16 @@ let slowAt = 0;
 
 async function refreshSlow() {
   const me = get().connected ? get().me : null;
-  const [banners, bal, mine] = await Promise.all([
+  const [banners, tokens, bal, mine] = await Promise.all([
     view<BannerJson[]>(C(), 'get_banners', { limit: 100 }),
+    view<TokenJson[]>(C(), 'nft_tokens', { from_index: '0', limit: 100 }),
     me ? balanceOf(me) : Promise.resolve(null),
     me ? view<MyTentJson[]>(C(), 'get_tents_of', { account_id: me, rounds: 20 }) : Promise.resolve([]),
   ]);
   myTents = mine;
+  const listed = new Map(tokens.map((t) => [Number(t.token_id), Object.keys(t.approved_account_ids ?? {})]));
   set({
-    banners: banners.map(toBanner).sort((a, b) => a.id - b.id),
+    banners: banners.map((b) => ({ ...toBanner(b), listedWith: listed.get(Number(b.token_id)) ?? [] })).sort((a, b) => a.id - b.id),
     ...(bal !== null ? { balance: toNear(bal) } : {}),
   });
 }
@@ -341,6 +344,42 @@ export function startLive() {
     // The contract pays the tower and the chest in one claim.
     claimTower: (bannerId) => claim(bannerId),
     emptyChest: (bannerId) => claim(bannerId),
+
+    handOver: async (bannerId, to) => {
+      try {
+        await send('hand over', (s) => s.call('nft_transfer', { receiver_id: to, token_id: String(bannerId) }, 1n));
+        pushFeed('info', `You handed Banner ${bannerId} to ${to}. Its tower and chest went with it.`);
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
+    listBanner: async (bannerId, market, price) => {
+      const priceYocto = BigInt(Math.round(price * 1e6)) * 10n ** 18n;
+      // The approval's storage is paid from this deposit; the contract refunds what it doesn't use.
+      try {
+        // Only a contract can receive nft_on_approve; a plain account is approved as an agent.
+        const isMarket = await hasContract(market).catch(() => { throw new Error(`${market} doesn't exist.`); });
+        await send('list', (s) => s.call('nft_approve', {
+          token_id: String(bannerId),
+          account_id: market,
+          ...(isMarket ? { msg: MARKETPLACE_MSG.replace('{price}', priceYocto.toString()) } : {}),
+        }, 10n ** 22n, 150));
+        pushFeed('info', `Banner ${bannerId} is listed on ${market} for ${price} NEAR.`);
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
+    unlistBanner: async (bannerId) => {
+      try {
+        await send('unlist', (s) => s.call('nft_revoke_all', { token_id: String(bannerId) }, 1n));
+        pushFeed('info', `Banner ${bannerId} is off the market. You can claim it again.`);
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
   });
 
   const claim = async (bannerId: number) => {

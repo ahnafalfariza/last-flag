@@ -1,5 +1,6 @@
 //! NEP-171 core, approval, enumeration and metadata for the banners, delegated to
-//! `near-contract-standards`. Token id N is the banner of round N. Only `settle` mints.
+//! `near-contract-standards`, plus NEP-199 payouts so marketplaces can sell them. Token id N is
+//! the banner of round N. Only `settle` mints.
 
 use std::collections::HashMap;
 
@@ -13,7 +14,7 @@ use near_contract_standards::non_fungible_token::metadata::{
 };
 use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_sdk::json_types::U128;
-use near_sdk::{near, AccountId, Promise, PromiseOrValue};
+use near_sdk::{assert_one_yocto, env, near, require, AccountId, Promise, PromiseOrValue};
 
 use crate::{Contract, ContractExt};
 
@@ -129,5 +130,48 @@ impl NonFungibleTokenMetadataProvider for Contract {
             reference: None,
             reference_hash: None,
         }
+    }
+}
+
+/// NEP-199 payout: who gets what share of a sale's `balance`.
+#[near(serializers = [json])]
+pub struct NftPayout {
+    pub payout: HashMap<AccountId, U128>,
+}
+
+/// A banner has no creator royalty (its chest is the royalty, paid by the next round), so the
+/// seller gets the whole sale price.
+fn seller_takes_all(owner: AccountId, balance: U128, max_len_payout: Option<u32>) -> NftPayout {
+    if let Some(max) = max_len_payout {
+        require!(max >= 1, "max_len_payout must allow the seller");
+    }
+    NftPayout { payout: HashMap::from([(owner, balance)]) }
+}
+
+#[near]
+impl Contract {
+    /// NEP-199: how a sale of `balance` would be split. All of it goes to the current owner.
+    pub fn nft_payout(&self, token_id: TokenId, balance: U128, max_len_payout: Option<u32>) -> NftPayout {
+        let owner = self.nft.owner_by_id.get(&token_id).unwrap_or_else(|| env::panic_str("no such banner"));
+        seller_takes_all(owner, balance, max_len_payout)
+    }
+
+    /// NEP-199: transfer for a sale and return the split. Called by an approved marketplace with
+    /// 1 yocto; the transfer clears every approval, so the buyer can claim right away.
+    #[payable]
+    pub fn nft_transfer_payout(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approval_id: Option<u64>,
+        memo: Option<String>,
+        balance: U128,
+        max_len_payout: Option<u32>,
+    ) -> NftPayout {
+        assert_one_yocto();
+        let owner = self.nft.owner_by_id.get(&token_id).unwrap_or_else(|| env::panic_str("no such banner"));
+        let payout = seller_takes_all(owner, balance, max_len_payout);
+        self.nft.nft_transfer(receiver_id, token_id, approval_id, memo);
+        payout
     }
 }

@@ -172,3 +172,34 @@ test('mock yield is paid from the funded reserve into the tower', async () => {
   const b = await view<{ banner: { yield_earned: string } }>(id, 'get_banner', { token_id: '1' });
   assert.ok(BigInt(b.banner.yield_earned) >= paid, 'banner keeps the round yield');
 });
+
+test('a marketplace sells a banner through NEP-199 and the buyer claims it', async () => {
+  const id = await game();
+  const seller = (await createSub(root, 'seller', 20)).account;
+  const market = (await createSub(root, 'market', 5)).account;
+  const buyer = (await createSub(root, 'buyer', 5)).account;
+  await call(seller, id, 'deposit', { round_id: 1 }, NEAR);
+  await sleep(2_500);
+  await call(market, id, 'tick', {});
+
+  // List: approve the marketplace (a plain account here, so no nft_on_approve message).
+  await call(seller, id, 'nft_approve', { token_id: '1', account_id: market.accountId }, yocto(0.01));
+  await assert.rejects(call(seller, id, 'claim_prize', { token_id: '1' }), /banner is listed/);
+  const token = await view<{ approved_account_ids: Record<string, number> }>(id, 'nft_token', { token_id: '1' });
+  const approvalId = token.approved_account_ids[market.accountId];
+
+  const quote = await view<{ payout: Record<string, string> }>(id, 'nft_payout', { token_id: '1', balance: '3000', max_len_payout: 10 });
+  assert.deepEqual(quote.payout, { [seller.accountId]: '3000' });
+
+  const sold = await call<{ payout: Record<string, string> }>(market, id, 'nft_transfer_payout', {
+    receiver_id: buyer.accountId, token_id: '1', approval_id: approvalId, balance: '3000', max_len_payout: 10,
+  }, 1n);
+  assert.deepEqual(sold.payout, { [seller.accountId]: '3000' });
+  const after = await view<{ owner_id: string; approved_account_ids: Record<string, number> }>(id, 'nft_token', { token_id: '1' });
+  assert.equal(after.owner_id, buyer.accountId);
+  assert.deepEqual(after.approved_account_ids, {});
+
+  // The tower went with the banner.
+  await call(buyer, id, 'claim_prize', { token_id: '1' });
+  await assert.rejects(call(seller, id, 'claim_prize', { token_id: '1' }), /not your banner/);
+});

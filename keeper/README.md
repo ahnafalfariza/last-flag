@@ -33,7 +33,8 @@ pnpm wasm && pnpm e2e
 Starts its own sandbox and checks what unit tests can't: `new` refuses other callers, the
 refund of the attached excess, early pack-up, a strike from real block randomness, the keeper
 reward (capped at 10% of the tower), withdraw and claim transfers, the hard cap, and that a late
-flag for a settled round is refunded.
+flag for a settled round is refunded, and a NEP-199 sale through an approved marketplace that
+hands the tower to the buyer.
 
 ## Testnet
 
