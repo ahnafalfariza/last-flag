@@ -62,6 +62,8 @@ export function Header() {
   const balance = useGame((s) => s.balance);
   const connected = useGame((s) => s.connected);
   const connect = useGame((s) => s.connect);
+  const disconnect = useGame((s) => s.disconnect);
+  const live = useGame((s) => s.mode === 'live');
   const { musicOn, sfxOn, toggleMusic, toggleSfx, toggleAll } = useSound();
   const anyOn = musicOn || sfxOn;
   const armed = round.state === 'Armed';
@@ -102,7 +104,7 @@ export function Header() {
         </div>
 
         {connected ? (
-          <button className="purse" title={me}>
+          <button className="purse" title={live ? `${me} · click to sign out` : me} onClick={live ? disconnect : undefined}>
             <span className="coin">N</span>
             <span className="purse-text"><b>{near(balance)}</b><small>{short(me)}</small></span>
           </button>

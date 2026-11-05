@@ -22,13 +22,16 @@ const BPS: u128 = 10_000;
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 /// The bell ringer never takes more than this share of the tower.
 const KEEPER_MAX_SHARE_BPS: u128 = 1_000;
-/// Worst-case bytes of one new tent (measured 133 for a 64-char account), with margin.
-const TENT_STORAGE_BYTES: u64 = 200;
+/// Worst-case bytes of one new tent plus its index entry (measured 254 for a 64-char
+/// account), with margin.
+const TENT_STORAGE_BYTES: u64 = 320;
 /// Worst-case bytes one settle writes, banner record plus NFT token (measured 1022 for a
-/// 64-char winner), with margin.
+/// 64-char winner before `ticks` and `struck_by`, which add up to 72), with margin.
 const BANNER_STORAGE_BYTES: u64 = 1_300;
 /// Longest hard cap `new` accepts, so a round always ends.
 const MAX_HARD_CAP_MS: u64 = 7 * 24 * 60 * 60_000;
+/// Most entries one list view returns.
+const MAX_PAGE: u32 = 100;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -39,6 +42,7 @@ enum StorageKey {
     NftMetadata,
     NftEnumeration,
     NftApprovals,
+    TentIndex,
 }
 
 #[near(serializers = [borsh, json])]
@@ -117,6 +121,11 @@ pub struct Round {
     pub hard_cap_at_ms: u64,
     pub last_roll_height: u64,
     pub ticks: u32,
+    /// The latest bell's roll in [0, 10000). Meaningless while `ticks` is 0.
+    pub last_roll: u32,
+    /// Tents pitched this round, counting a re-pitch after packing up. Next index in the tent
+    /// index.
+    pub tents_pitched: u32,
 }
 
 impl Round {
@@ -135,6 +144,8 @@ impl Round {
             hard_cap_at_ms: 0,
             last_roll_height: 0,
             ticks: 0,
+            last_roll: 0,
+            tents_pitched: 0,
         }
     }
 
@@ -156,6 +167,10 @@ pub struct Banner {
     pub duration_ms: u64,
     pub won_at_ms: u64,
     pub ended_by_hard_cap: bool,
+    /// Bells rung in the round, the striking one included.
+    pub ticks: u32,
+    /// Who rang the striking bell.
+    pub struck_by: AccountId,
 }
 
 #[near(serializers = [json])]
@@ -172,6 +187,18 @@ pub struct BannerView {
     pub token_id: TokenId,
     pub owner_id: AccountId,
     pub banner: Banner,
+}
+
+#[near(serializers = [json])]
+pub struct TentView {
+    pub account_id: AccountId,
+    pub amount: NearToken,
+}
+
+#[near(serializers = [json])]
+pub struct MyTentView {
+    pub round_id: u64,
+    pub amount: NearToken,
 }
 
 #[near(serializers = [json])]
@@ -223,6 +250,8 @@ pub struct Contract {
     tents: LookupMap<(u64, AccountId), NearToken>,
     banners: LookupMap<u64, Banner>,
     nft: NonFungibleToken,
+    /// (round, n) -> account of the n-th tent pitched in that round, so views can list tents.
+    tent_index: LookupMap<(u64, u32), AccountId>,
 }
 
 #[near]
@@ -247,6 +276,7 @@ impl Contract {
                 Some(StorageKey::NftEnumeration),
                 Some(StorageKey::NftApprovals),
             ),
+            tent_index: LookupMap::new(StorageKey::TentIndex),
         }
     }
 
@@ -270,7 +300,12 @@ impl Contract {
 
         let key = (round_id, account.clone());
         let before = env::storage_usage();
-        let tent = self.tents.get(&key).unwrap_or(NearToken::from_yoctonear(0));
+        let tent = self.tents.get(&key);
+        if tent.is_none() {
+            self.tent_index.insert(&(round_id, self.round.tents_pitched), &account);
+            self.round.tents_pitched += 1;
+        }
+        let tent = tent.unwrap_or(NearToken::from_yoctonear(0));
         self.tents.insert(&key, &tent.saturating_add(principal));
         // The tower pays for the tent's storage. Params::check makes the minimum cover it.
         let tent_storage = storage_cost(before);
@@ -337,6 +372,7 @@ impl Contract {
         r.ticks += 1;
 
         let roll = roll(r.id, r.ticks);
+        r.last_roll = roll;
         let threshold = self.params.hazard_bps;
         let struck = hard_cap || roll < threshold;
         Event::Bell { round_id: r.id, by: by.clone(), roll, threshold, struck }.emit();
@@ -457,6 +493,41 @@ impl Contract {
         self.tents.get(&(round_id, account_id))
     }
 
+    /// Tents still standing in a round, in the order they were first pitched. Pages through the
+    /// tent index from `from_index`; packed-up tents are skipped, so a page can come back short.
+    pub fn get_tents(
+        &self,
+        round_id: u64,
+        from_index: Option<u32>,
+        limit: Option<u32>,
+    ) -> Vec<TentView> {
+        let from = from_index.unwrap_or(0);
+        let limit = limit.unwrap_or(MAX_PAGE).min(MAX_PAGE);
+        let mut seen = std::collections::HashSet::new();
+        (from..from.saturating_add(limit))
+            .map_while(|n| self.tent_index.get(&(round_id, n)))
+            .filter(|account| seen.insert(account.clone()))
+            .filter_map(|account_id| {
+                let amount = self.tents.get(&(round_id, account_id.clone()))?;
+                Some(TentView { account_id, amount })
+            })
+            .collect()
+    }
+
+    /// One account's standing tents in the current round and the `rounds` before it
+    /// (default 10, at most 100), newest first.
+    pub fn get_tents_of(&self, account_id: AccountId, rounds: Option<u32>) -> Vec<MyTentView> {
+        let rounds = u64::from(rounds.unwrap_or(10).clamp(1, MAX_PAGE));
+        let top = self.round.id;
+        (top.saturating_sub(rounds).max(1)..=top)
+            .rev()
+            .filter_map(|round_id| {
+                let amount = self.tents.get(&(round_id, account_id.clone()))?;
+                Some(MyTentView { round_id, amount })
+            })
+            .collect()
+    }
+
     pub fn get_banner(&self, token_id: TokenId) -> Option<BannerView> {
         let round_id: u64 = token_id.parse().ok()?;
         let banner = self.banners.get(&round_id)?;
@@ -522,6 +593,8 @@ impl Contract {
             duration_ms: now - round.opened_at_ms,
             won_at_ms: now,
             ended_by_hard_cap: hard_cap,
+            ticks: round.ticks,
+            struck_by: by.clone(),
         };
         self.banners.insert(&round.id, &banner);
         // The reserve covers the worst case, so this never dips into principal. What it does

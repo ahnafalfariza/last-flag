@@ -10,6 +10,8 @@ export function ActionTray() {
   const connected = useGame((s) => s.connected);
   const connect = useGame((s) => s.connect);
   const deposit = useGame((s) => s.deposit);
+  const live = useGame((s) => s.mode === 'live');
+  const pending = useGame((s) => s.pending);
   const [pick, setPick] = useState<'min' | 'double' | 'custom'>('min');
   const [custom, setCustom] = useState('');
   const [toast, setToast] = useState<string | null>(null);
@@ -22,19 +24,21 @@ export function ActionTray() {
 
   // Shown and sent with two decimals, rounded up so the contract's minimum is always met.
   const min = Math.ceil(round.minDeposit * 100) / 100;
-  const amount = pick === 'min' ? min : pick === 'double' ? min * 2 : Number(custom) || min;
+  // On chain the contract charges the minimum at the moment the bid lands, so there is nothing to pick.
+  const amount = live || pick === 'min' ? min : pick === 'double' ? min * 2 : Number(custom) || min;
   const leading = round.leader === me;
   const fee = amount * (params.potFeeBps + params.royaltyFeeBps) / 10_000;
 
   const go = () => {
     if (!connected) { connect(); return; }
-    const err = deposit(me, Math.round(amount * 100) / 100);
-    if (err) setToast(err);
+    void Promise.resolve(deposit(me, Math.round(amount * 100) / 100)).then((err) => { if (err) setToast(err); });
   };
 
   const label = !connected
     ? 'Connect wallet to bid'
-    : leading
+    : pending === 'deposit'
+      ? 'Waiting for your wallet...'
+      : leading
       ? `Add ${near(amount)} NEAR and reset the timer`
       : round.state === 'Open'
         ? `Bid ${near(amount)} NEAR and start the round`
@@ -42,6 +46,13 @@ export function ActionTray() {
 
   return (
     <section className="bidbar" aria-label="Place a bid">
+      {live ? (
+        <div className="picker live-pick">
+          <span className="legend">Your bid</span>
+          <b>{near(min)} NEAR</b>
+          <small>You pay the minimum when your bid lands. Up to 10% extra is attached in case someone bids first, and comes straight back.</small>
+        </div>
+      ) : (
       <fieldset className="picker">
         <legend>Your bid</legend>
         <button type="button" aria-pressed={pick === 'min'} onClick={() => setPick('min')}><b>{near(min)}</b><small>Lowest</small></button>
@@ -51,8 +62,9 @@ export function ActionTray() {
           <input inputMode="decimal" placeholder={near(min)} value={custom} onFocus={() => setPick('custom')} onChange={(e) => { setCustom(e.target.value); setPick('custom'); }} />
         </label>
       </fieldset>
+      )}
 
-      <button type="button" className="primary" onClick={go} disabled={round.state === 'Settled'}>{label}</button>
+      <button type="button" className="primary" onClick={go} disabled={round.state === 'Settled' || pending !== null}>{label}</button>
 
       <dl className="split">
         <dt>Fee</dt><dd>{near(fee)} NEAR</dd>

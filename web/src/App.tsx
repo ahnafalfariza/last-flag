@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { startClock, useGame } from './game/store';
+import { LIVE } from './chain/config';
 import { bindSound } from './audio/bind';
 import { Header } from './ui/Header';
 import { HillView } from './ui/HillView';
@@ -15,7 +16,14 @@ const use3d = new URLSearchParams(location.search).get('scene') === '3d';
 
 export default function App() {
   const page = useGame((s) => s.page);
-  useEffect(() => startClock(), []);
+  // Live mode loads the chain code only when a contract is configured.
+  useEffect(() => {
+    if (!LIVE) return startClock();
+    let stop: (() => void) | undefined;
+    let gone = false;
+    import('./chain/live').then((m) => { if (!gone) stop = m.startLive(); });
+    return () => { gone = true; stop?.(); };
+  }, []);
   useEffect(() => bindSound(), []);
   return (
     <div className={`app page-${page}`}>

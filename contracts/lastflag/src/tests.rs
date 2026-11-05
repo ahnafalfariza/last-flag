@@ -265,3 +265,81 @@ fn seller_cannot_claim_after_transfer() {
     call(&accounts(1), zero(), 33_000, 5);
     let _ = c.claim_prize("1".to_string());
 }
+
+#[test]
+fn tent_storage_fits_its_budget() {
+    let mut c = setup(0);
+    let long: AccountId = "a".repeat(64).parse().unwrap();
+    let before = env::storage_usage();
+    call(&long, near(1), 0, 2);
+    c.deposit(1);
+    let used = env::storage_usage() - before;
+    assert!(used <= TENT_STORAGE_BYTES, "tent took {used} bytes");
+}
+
+#[test]
+fn banner_storage_fits_its_budget() {
+    let mut c = setup(10_000);
+    let long: AccountId = "a".repeat(64).parse().unwrap();
+    let ringer: AccountId = "b".repeat(64).parse().unwrap();
+    call(&long, near(1), 0, 2);
+    c.deposit(1);
+    let before = env::storage_usage();
+    call(&ringer, zero(), 31_000, 3);
+    c.tick();
+    // Settle also opens the next round, which is smaller than the one it replaces.
+    let used = env::storage_usage().saturating_sub(before);
+    assert!(used <= BANNER_STORAGE_BYTES, "banner took {used} bytes");
+    let b = c.get_banner("1".to_string()).unwrap().banner;
+    assert_eq!(b.struck_by, ringer);
+    assert_eq!(b.ticks, 1);
+}
+
+#[test]
+fn tents_list_in_pitch_order_and_skip_packed_ones() {
+    let mut c = setup(0);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    call(&accounts(2), near(2), 1_000, 3);
+    c.deposit(1);
+    call(&accounts(3), near(2), 2_000, 4);
+    c.deposit(1);
+    call(&accounts(1), zero(), 3_000, 5);
+    let _ = c.withdraw(1);
+    let names = |c: &Contract| -> Vec<AccountId> {
+        c.get_tents(1, None, None).into_iter().map(|t| t.account_id).collect()
+    };
+    assert_eq!(names(&c), vec![accounts(2), accounts(3)]);
+
+    // A re-pitch after packing up shows once, at its first position.
+    call(&accounts(1), near(2), 4_000, 6);
+    c.deposit(1);
+    call(&accounts(2), near(2), 5_000, 7);
+    c.deposit(1);
+    assert_eq!(names(&c), vec![accounts(1), accounts(2), accounts(3)]);
+    assert_eq!(c.get_round().round.tents_pitched, 4);
+    assert_eq!(c.get_tents(1, Some(1), Some(1)).len(), 1);
+}
+
+#[test]
+fn tents_of_lists_rounds_newest_first() {
+    let mut c = setup(10_000);
+    settle_round_one(&mut c);
+    call(&accounts(1), near(1), 32_000, 4);
+    c.deposit(2);
+    let mine = c.get_tents_of(accounts(1), None);
+    assert_eq!(mine.iter().map(|t| t.round_id).collect::<Vec<_>>(), vec![2, 1]);
+    assert_eq!(mine[1].amount, milli(960));
+    assert!(c.get_tents_of(accounts(2), None).is_empty());
+}
+
+#[test]
+fn round_view_carries_the_last_roll() {
+    let mut c = setup(0);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    call(&accounts(2), zero(), 31_000, 3);
+    let TickResult::Continue { roll } = c.tick() else { panic!("hazard 0 never strikes") };
+    let r = c.get_round().round;
+    assert_eq!((r.ticks, r.last_roll), (1, roll));
+}
