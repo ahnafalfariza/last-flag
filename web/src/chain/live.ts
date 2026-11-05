@@ -18,13 +18,14 @@ type Yocto = string;
 interface ParamsJson {
   min_deposit_start: Yocto; growth_bps: number; min_deposit_cap: Yocto; pot_fee_bps: number;
   royalty_fee_bps: number; grace_ms: number; hazard_bps: number; hard_cap_ms: number; keeper_reward: Yocto;
+  yield_ppb_per_sec?: number;
 }
 interface RoundJson {
   id: number; opened_at_ms: number; leader: string | null; prize: Yocto; principal_total: Yocto;
   min_deposit: Yocto; blocks: number; last_deposit_at_ms: number; grace_until_ms: number;
   hard_cap_at_ms: number; ticks: number; last_roll: number; tents_pitched: number;
 }
-interface RoundViewJson { round: RoundJson; status: string; hard_cap_reached: boolean; now_ms: number }
+interface RoundViewJson { round: RoundJson; status: string; hard_cap_reached: boolean; now_ms: number; yield_reserve?: Yocto }
 interface BannerJson {
   token_id: string; owner_id: string;
   banner: {
@@ -45,7 +46,8 @@ const toParams = (p: ParamsJson): Params => ({
   graceMs: p.grace_ms,
   hazardBps: p.hazard_bps,
   hardCapMs: p.hard_cap_ms,
-  yieldPerSec: 0, // no yield adapter on chain yet: the tower is fees only
+  // Mock yield, paid from a funded reserve. The UI only reads it to word the rules.
+  yieldPerSec: (p.yield_ppb_per_sec ?? 0) / 1e9,
   keeperReward: toNear(p.keeper_reward),
 });
 
@@ -70,6 +72,8 @@ const toBanner = (b: BannerJson): Banner => ({
 let signer: Signer | null = null;
 let clockOffset = 0; // chain ms minus local ms
 let last: RoundJson | null = null;
+let lastView: RoundViewJson | null = null;
+let yieldPpb = 0;
 let tents: TentJson[] = [];
 let myTents: MyTentJson[] = [];
 /** Who planted each block we watched land, per round. Blocks from before the page opened are unknown. */
@@ -170,6 +174,7 @@ async function poll(force = false) {
   try {
     const v = await view<RoundViewJson>(C(), 'get_round');
     clockOffset = v.now_ms - Date.now();
+    lastView = v;
     const r = v.round;
     const prev = last;
     const changed = !prev || prev.id !== r.id || prev.blocks !== r.blocks || prev.tents_pitched !== r.tents_pitched;
@@ -221,7 +226,22 @@ async function poll(force = false) {
   }
 }
 
-/** Between polls: run the clock, fade the flash, and bring the storm in on time. */
+/**
+ * The tower as it stands at `now`: the polled prize plus the mock yield owed since, mirroring
+ * the contract's `yield_owed` (per-second rate, stops at the hard cap, capped by the reserve).
+ */
+const prizeAt = (v: RoundViewJson, now: number) => {
+  const r = v.round;
+  if (!r.leader || !yieldPpb) return toNear(r.prize);
+  const ms = BigInt(Math.max(0, Math.min(now, r.hard_cap_at_ms) - v.now_ms));
+  const perSec = (BigInt(r.principal_total) * BigInt(yieldPpb)) / 1_000_000_000n;
+  let owed = (perSec * ms) / 1000n;
+  const reserve = BigInt(v.yield_reserve ?? '0');
+  if (owed > reserve) owed = reserve;
+  return toNear(BigInt(r.prize) + owed);
+};
+
+/** Between polls: run the clock, grow the tower, fade the flash, and bring the storm in on time. */
 function frame() {
   const s = get();
   if (!last) return;
@@ -230,7 +250,9 @@ function frame() {
   if (state === 'Armed' && s.round.state === 'Live' && s.round.id === last.id) {
     pushFeed('storm', `Sudden death. Every check has a ${s.params.hazardBps / 100}% chance to end round ${last.id}.`);
   }
-  set({ now, flash: Math.max(0, s.flash - 0.4), round: state === s.round.state ? s.round : { ...s.round, state } });
+  const prize = lastView && lastView.round.id === s.round.id ? prizeAt(lastView, now) : s.round.prize;
+  const round = state === s.round.state && prize === s.round.prize ? s.round : { ...s.round, state, prize };
+  set({ now, flash: Math.max(0, s.flash - 0.4), round });
 }
 
 /* ---------- actions ---------- */
@@ -330,7 +352,7 @@ export function startLive() {
     }
   };
 
-  view<ParamsJson>(C(), 'get_params').then((p) => set({ params: toParams(p) }), (e) => console.warn(e));
+  view<ParamsJson>(C(), 'get_params').then((p) => { yieldPpb = p.yield_ppb_per_sec ?? 0; set({ params: toParams(p) }); }, (e) => console.warn(e));
   restore().then((s) => s && onSignedIn(s));
   void poll(true);
   const polling = setInterval(() => void poll(), 1000);

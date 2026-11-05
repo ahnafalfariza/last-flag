@@ -36,7 +36,8 @@ What differs from the simulator, because the contract works that way:
 - A bid always costs the current minimum. The tray shows one amount; 10% headroom is attached in
   case another bid lands first, and the contract refunds what it didn't charge.
 - Claiming a banner pays the tower and the chest together.
-- The tower is fees only: there is no yield adapter on chain, and the rules page says so.
+- The tower grows from fees and from the contract's mock yield, paid from its funded reserve. Between
+  polls the page adds the yield owed, so the prize keeps ticking up. It shows 4 decimals while yield is on.
 - Blocks placed before the page opened are drawn with a camper's colour, since the contract keeps
   tents, not a block-by-block history.
 
