@@ -1,0 +1,27 @@
+# Keeper and demo bots for a live Last Flag contract.
+#
+#   cp keeper/.env.example keeper/.env    # fill in, never commit it
+#   docker compose up -d --build          # keeper + bots
+#   docker compose up -d --build keeper   # keeper only
+#   docker compose logs -f
+#
+# Both read keeper/.env. Containers restart on crash and after a reboot until you stop them.
+
+x-common: &common
+  build: ./keeper
+  image: lastflag-keeper
+  env_file: keeper/.env
+  restart: unless-stopped
+  init: true
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  keeper:
+    <<: *common
+    command: ["node", "src/keeper.ts"]
+
+  bots:
+    <<: *common
+    command: ["node", "src/bots.ts"]

@@ -49,13 +49,17 @@ async function play() {
 
   let whaleAt = 0;
   let round = 0;
+  let bids = 0;
+  let lastBeat = 0;
   const STEP_MS = 1000;
+  const HEARTBEAT_MS = Number(env.HEARTBEAT_MS ?? 60_000);
 
   const bid = async (bot: (typeof bots)[number], r: RoundView['round']) => {
     // Attach 3x for the whale: the contract still charges the minimum and refunds the rest.
     const attach = (BigInt(r.min_deposit) * (bot.name === 'whale' ? 300n : 110n)) / 100n;
     try {
       await bot.acc.callFunction({ contractId: CONTRACT(), methodName: 'deposit', args: { round_id: r.id }, deposit: attach, gas: 100n * 10n ** 12n });
+      bids++;
       console.log(`round ${r.id}: ${bot.name} bid ${nearStr(r.min_deposit)} (block ${r.blocks + 1})`);
     } catch (e) {
       console.warn(`${bot.name} bid failed: ${reason(e)}`);
@@ -67,7 +71,11 @@ async function play() {
     let v: RoundView;
     try { v = await view<RoundView>('get_round'); } catch (e) { console.warn(reason(e)); continue; }
     const r = v.round;
-    if (r.id !== round) { round = r.id; whaleAt = 0.05; }
+    if (r.id !== round) { round = r.id; whaleAt = 0.05; console.log(`round ${r.id}: ${v.status}`); }
+    if (Date.now() - lastBeat >= HEARTBEAT_MS) {
+      console.log(`alive: round ${r.id} ${v.status}, leader ${r.leader ?? 'none'}, ${bids} bids so far`);
+      lastBeat = Date.now();
+    }
     if (v.hard_cap_reached) continue;
     const dt = STEP_MS / 1000;
     const quiet = r.blocks > 45 ? 0.3 : 1;
@@ -100,6 +108,9 @@ async function play() {
     }
   }
 }
+
+// As PID 1 in a container, node ignores SIGTERM unless it has a handler.
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => process.exit(0));
 
 if (process.argv[2] === 'setup') await setup();
 else await play();
