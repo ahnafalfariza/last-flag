@@ -1,6 +1,7 @@
 use near_contract_standards::non_fungible_token::approval::NonFungibleTokenApproval;
 use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
 use near_sdk::test_utils::{accounts, VMContextBuilder};
+use near_sdk::json_types::U128;
 use near_sdk::{testing_env, AccountId, NearToken};
 
 use super::*;
@@ -444,4 +445,43 @@ fn funding_needs_a_deposit() {
 fn yield_rate_is_bounded() {
     call(&game(), zero(), 0, 1);
     Contract::new(Some(Params { yield_ppb_per_sec: 2_000_000, ..Params::demo() }));
+}
+
+#[test]
+fn payout_gives_the_whole_sale_to_the_owner() {
+    let mut c = setup(10_000);
+    settle_round_one(&mut c);
+    let p = c.nft_payout("1".to_string(), U128(5_000), Some(10)).payout;
+    assert_eq!(p.len(), 1);
+    assert_eq!(p[&accounts(1)], U128(5_000));
+}
+
+#[test]
+fn marketplace_sells_the_banner_and_the_buyer_can_claim() {
+    let mut c = setup(10_000);
+    settle_round_one(&mut c);
+    let market = accounts(4);
+    call(&accounts(1), milli(10), 32_000, 4);
+    let _ = c.nft_approve("1".to_string(), market.clone(), None);
+    let approval_id = c.nft_token("1".to_string()).unwrap().approved_account_ids.unwrap()[&market];
+
+    call(&market, NearToken::from_yoctonear(1), 33_000, 5);
+    let p = c.nft_transfer_payout(accounts(3), "1".to_string(), Some(approval_id), None, U128(7_000), None);
+    assert_eq!(p.payout[&accounts(1)], U128(7_000));
+    let t = c.nft_token("1".to_string()).unwrap();
+    assert_eq!(t.owner_id, accounts(3));
+    assert!(t.approved_account_ids.unwrap().is_empty(), "sale clears the listing");
+
+    call(&accounts(3), zero(), 34_000, 6);
+    let _ = c.claim_prize("1".to_string());
+    assert!(c.get_banner("1".to_string()).unwrap().banner.claimed);
+}
+
+#[test]
+#[should_panic]
+fn unapproved_account_cannot_take_a_payout_transfer() {
+    let mut c = setup(10_000);
+    settle_round_one(&mut c);
+    call(&accounts(4), NearToken::from_yoctonear(1), 33_000, 5);
+    let _ = c.nft_transfer_payout(accounts(4), "1".to_string(), Some(0), None, U128(1), None);
 }

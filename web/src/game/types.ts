@@ -62,6 +62,8 @@ export interface Banner {
   ticks?: number;
   /** Who ran the check that ended it. */
   struckBy?: string;
+  /** Accounts approved to transfer it, i.e. marketplaces it is listed on. Claims wait while any. */
+  listedWith?: string[];
 }
 
 export interface ThunderEvent {

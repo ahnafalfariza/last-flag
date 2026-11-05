@@ -78,6 +78,12 @@ interface Store {
   withdraw: (roundId: number, account: string) => Result<number>;
   claimTower: (bannerId: number) => Result<void>;
   emptyChest: (bannerId: number) => Result<void>;
+  /** Give the banner, tower and chest included, to another account. Resolves to an error or null. */
+  handOver: (bannerId: number, to: string) => Result<string | null>;
+  /** Approve a marketplace to sell the banner at `price` NEAR. */
+  listBanner: (bannerId: number, market: string, price: number) => Result<string | null>;
+  /** Revoke every marketplace approval, so the tower and chest can be claimed again. */
+  unlistBanner: (bannerId: number) => Result<string | null>;
   advance: (dtMs: number) => void;
 }
 
@@ -323,6 +329,36 @@ export const useGame = create<Store>((set, get) => ({
       balance: s.balance + take,
       feed: [{ id: id(), at: s.now, kind: 'info' as const, text: `You emptied the chest under Banner ${bannerId}: ${take.toFixed(3)} NEAR.` }, ...s.feed].slice(0, 40),
     });
+  },
+
+  handOver: (bannerId, to) => {
+    const s = get();
+    const b = s.banners.find((x) => x.id === bannerId);
+    if (!b || b.owner !== s.me) return 'Not your banner.';
+    if (!/^[a-z0-9._-]{2,64}$/.test(to)) return 'That is not a NEAR account name.';
+    set({
+      banners: s.banners.map((x) => (x.id === bannerId ? { ...x, owner: to, listedWith: [] } : x)),
+      feed: [{ id: id(), at: s.now, kind: 'info' as const, text: `You handed Banner ${bannerId} to ${to}.` }, ...s.feed].slice(0, 40),
+    });
+    return null;
+  },
+
+  listBanner: (bannerId, market, price) => {
+    const s = get();
+    const b = s.banners.find((x) => x.id === bannerId);
+    if (!b || b.owner !== s.me) return 'Not your banner.';
+    if (!(price > 0)) return 'Set a price above 0.';
+    set({
+      banners: s.banners.map((x) => (x.id === bannerId ? { ...x, listedWith: [market] } : x)),
+      feed: [{ id: id(), at: s.now, kind: 'info' as const, text: `You listed Banner ${bannerId} on ${market} for ${price} NEAR.` }, ...s.feed].slice(0, 40),
+    });
+    return null;
+  },
+
+  unlistBanner: (bannerId) => {
+    const s = get();
+    set({ banners: s.banners.map((x) => (x.id === bannerId ? { ...x, listedWith: [] } : x)) });
+    return null;
   },
 
   advance: (dtMs) => {

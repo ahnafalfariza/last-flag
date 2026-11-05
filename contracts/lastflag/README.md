@@ -31,6 +31,7 @@ message turns into a bare `unreachable` trap. Deploy and integration tests live 
 | `get_tents(round_id, from_index?, limit?)` | Standing tents of a round in pitch order, 100 per page. |
 | `get_tents_of(account_id, rounds?)` | One account's standing tents in the current round and the 10 (up to 100) before it. |
 | `nft_*` | NEP-171 core, approval, enumeration, metadata. |
+| `nft_payout`, `nft_transfer_payout` | NEP-199, so marketplaces can sell banners. The seller gets the whole price: a banner's royalty is its chest, which the next round pays. The sale clears every approval, so the buyer can claim right away. |
 
 Events are NEP-297 logs under standard `lastflag`: `flag_planted`, `bell`, `strike`, `tent_packed`, `prize_claimed`, `yield_funded`. `nft_mint` goes out on settle.
 

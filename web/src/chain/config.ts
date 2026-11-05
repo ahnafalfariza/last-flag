@@ -26,5 +26,13 @@ export const DEV_KEY: string | undefined = env.VITE_DEV_KEY || undefined;
 export const EXPLORER: string | null =
   NETWORK === 'testnet' ? 'https://testnet.nearblocks.io' : NETWORK === 'mainnet' ? 'https://nearblocks.io' : null;
 
+/**
+ * Where "Sell" lists a banner: a marketplace contract that takes NEP-178 approvals and settles
+ * through NEP-199 `nft_transfer_payout`. The message template's {price} is the price in yocto.
+ * The default message is the one the NEAR examples marketplace reads.
+ */
+export const MARKETPLACE_ID: string = env.VITE_MARKETPLACE_ID || '';
+export const MARKETPLACE_MSG: string = env.VITE_MARKETPLACE_MSG || '{"sale_conditions":"{price}"}';
+
 /** Live when a contract is configured, unless the page asks for the simulator. */
 export const LIVE = !!CONTRACT_ID && !new URLSearchParams(location.search).has('sim');

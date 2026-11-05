@@ -3,6 +3,7 @@ import { useGame } from '../game/store';
 import { duration, near, short } from '../game/format';
 import { coverPoint, usePhone, useStageSize } from './stage';
 import type { Banner } from '../game/types';
+import { BannerActions } from './BannerActions';
 
 /** Pixel geometry of hall.jpg (1920x1440), measured from the render. */
 const IMG = { w: 1920, h: 1440, src: '/img/hall.jpg' };
@@ -58,6 +59,8 @@ export function Hall() {
   const hung = rail.slice(page * RAIL.length, page * RAIL.length + RAIL.length);
 
   const mine = featured.owner === me;
+  // A listed banner can't be drained mid-sale; the contract refuses claims until it is unlisted.
+  const listed = (featured.listedWith?.length ?? 0) > 0;
   const chestLeft = featured.chest - featured.chestTaken;
   const streaming = featured.id === round.id - 1;
   const who = (b: Banner) => (b.owner === me ? 'you' : short(b.owner));
@@ -131,20 +134,17 @@ export function Hall() {
             <span className="label amber">THE TOWER</span>
             <span className="mid gold">{near(featured.prize)} <span className="unit">NEAR</span></span>
             {featured.claimed ? <span className="stamp">CLAIMED</span> : mine ? (
-              <button className="chunk green" onClick={() => claimTower(featured.id)} disabled={!connected}>CLAIM</button>
+              <button className="chunk green" onClick={() => claimTower(featured.id)} disabled={!connected || listed} title={listed ? 'Cancel the listing to claim' : undefined}>CLAIM</button>
             ) : <span className="sub">not claimed yet</span>}
           </div>
           <div className="ledger-cell">
             <span className="label">THE CHEST</span>
             <span className="mid">{near(chestLeft, 3)} <span className="unit">NEAR</span></span>
             {mine ? (
-              <button className="chunk gold" onClick={() => emptyChest(featured.id)} disabled={!connected || chestLeft <= 0}>EMPTY</button>
+              <button className="chunk gold" onClick={() => emptyChest(featured.id)} disabled={!connected || chestLeft <= 0 || listed} title={listed ? 'Cancel the listing to claim' : undefined}>EMPTY</button>
             ) : <span className="sub">{streaming ? `1% of round ${round.id}, filling` : `from round ${featured.id + 1}`}</span>}
           </div>
-          <div className="ledger-cell ledger-acts">
-            <button className="chunk" disabled={!mine}>Hand over</button>
-            <button className="chunk" disabled={!mine}>Sell</button>
-          </div>
+          <BannerActions key={featured.id} banner={featured} mine={mine} />
         </div>
       </section>
 
