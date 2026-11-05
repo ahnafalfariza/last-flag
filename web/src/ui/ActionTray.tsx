@@ -50,7 +50,7 @@ export function ActionTray() {
         <div className="picker live-pick">
           <span className="legend">Your bid</span>
           <b>{near(min)} NEAR</b>
-          <small>You pay the minimum when your bid lands. Up to 10% extra is attached in case someone bids first, and comes straight back.</small>
+          <small title="Up to 10% extra is attached in case someone bids first. Whatever isn't charged comes straight back.">Charged when it lands. Extra comes back.</small>
         </div>
       ) : (
       <fieldset className="picker">
