@@ -4,7 +4,7 @@ Node 24 scripts (TypeScript run directly, no build) around the `lastflag` contra
 
 ```bash
 pnpm install
-pnpm wasm      # build the contract wasm (needs --cfg near, the script sets it)
+pnpm wasm      # build the contract wasm and the e2e test helper (needs --cfg near, the script sets it)
 ```
 
 ## Play the real contract locally
@@ -34,7 +34,10 @@ Starts its own sandbox and checks what unit tests can't: `new` refuses other cal
 refund of the attached excess, early pack-up, a strike from real block randomness, the keeper
 reward (capped at 10% of the tower), withdraw and claim transfers, the hard cap, and that a late
 flag for a settled round is refunded, and a NEP-199 sale through an approved marketplace that
-hands the tower to the buyer.
+hands the tower to the buyer. It also checks that a failed payout is put back: a
+`contracts/vanisher` account withdraws a tent, or claims a banner, and deletes itself before the
+transfer lands, and the tent or the banner's tower and chest must be restored. `pnpm wasm` builds
+the game (`pnpm wasm:game`) and that helper (`pnpm wasm:vanisher`).
 
 ## Testnet
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { Account, actions, JsonRpcProvider } from 'near-api-js';
 import { DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY, Sandbox } from 'near-sandbox';
 import { createSub, deployGame, fundYield, WASM } from './deploy.ts';
@@ -56,6 +57,40 @@ async function game(over: Record<string, string | number> = {}) {
   const g = await createSub(root, `game${++n}`, 20);
   await deployGame(g.account, WASM, params(over));
   return g.account.accountId;
+}
+
+/** `contracts/vanisher`, built by `pnpm wasm`: plays the game, then deletes itself mid-payout. */
+const VANISHER = fileURLToPath(new URL('../../contracts/vanisher/target/near-cfg/wasm32-unknown-unknown/release/vanisher.wasm', import.meta.url));
+
+async function vanisher(prefix: string) {
+  const v = (await createSub(root, prefix, 20)).account;
+  await v.signAndSendTransaction({ receiverId: v.accountId, actions: [actions.deployContract(readFileSync(VANISHER))] });
+  return v.accountId;
+}
+
+/** `vanisherId` calls the game as itself, with `deposit` attached. */
+const via = (vanisherId: string, contractId: string, method_name: string, args: Record<string, unknown>, deposit = 0n) =>
+  call(root, vanisherId, 'call', { receiver_id: contractId, method_name, args: JSON.stringify(args) }, deposit);
+
+/**
+ * `vanisherId` calls the game and deletes itself in the same receipt, so the payout lands on a
+ * missing account. Resolves to what `on_payout` returned and the failed transfer's outcome.
+ */
+async function vanish(vanisherId: string, contractId: string, method_name: string, args: Record<string, unknown>) {
+  const raw = await root.callFunctionRaw({
+    contractId: vanisherId,
+    methodName: 'call_and_vanish',
+    args: { receiver_id: contractId, method_name, args: JSON.stringify(args), beneficiary_id: root.accountId },
+    gas: 150n * TGAS,
+  });
+  const status = raw.status as { SuccessValue?: string };
+  assert.ok(status.SuccessValue !== undefined, `call_and_vanish failed: ${JSON.stringify(raw.status)}`);
+  const paidOut = JSON.parse(Buffer.from(status.SuccessValue, 'base64').toString()) as boolean;
+  // The game's transfer, landing on the deleted account.
+  const failed = raw.receipts_outcome.some((o) =>
+    o.outcome.executor_id === vanisherId && JSON.stringify(o.outcome.status).includes('AccountDoesNotExist'));
+  await assert.rejects(provider.viewAccount({ accountId: vanisherId }), 'the vanisher is gone');
+  return { paidOut, failed };
 }
 
 test('new refuses any caller but the contract itself', async () => {
@@ -202,4 +237,55 @@ test('a marketplace sells a banner through NEP-199 and the buyer claims it', asy
   // The tower went with the banner.
   await call(buyer, id, 'claim_prize', { token_id: '1' });
   await assert.rejects(call(seller, id, 'claim_prize', { token_id: '1' }), /not your banner/);
+});
+
+interface Totals { round: { principal_total: string } }
+
+test('a tent paid to a vanished account is put back', async () => {
+  const id = await game();
+  const v = await vanisher('vanisher');
+  const bob = (await createSub(root, 'bob2', 20)).account;
+
+  await via(v, id, 'deposit', { round_id: 1 }, NEAR);
+  await call(bob, id, 'deposit', { round_id: 1 }, yocto(1.2));
+  const tent = await view<string>(id, 'get_tent', { round_id: 1, account_id: v });
+  assert.equal(tent, (NEAR * 96n / 100n).toString());
+  const principal = (await view<Totals>(id, 'get_round')).round.principal_total;
+
+  // Outbid, so it may pack up. It does, and is gone before the 0.96 NEAR arrives.
+  const { paidOut, failed } = await vanish(v, id, 'withdraw', { round_id: 1 });
+  assert.ok(failed, 'the transfer to the vanished account failed');
+  assert.equal(paidOut, false, 'on_payout saw the failure');
+
+  assert.equal(await view<string>(id, 'get_tent', { round_id: 1, account_id: v }), tent);
+  assert.equal((await view<Totals>(id, 'get_round')).round.principal_total, principal);
+  const tents = await view<{ account_id: string }[]>(id, 'get_tents', { round_id: 1 });
+  assert.deepEqual(tents.map((t) => t.account_id), [v, bob.accountId]);
+});
+
+test('a banner paid to a vanished owner is put back', async () => {
+  const id = await game();
+  const v = await vanisher('winner');
+  const dave = (await createSub(root, 'challenger', 20)).account;
+  const keeper = (await createSub(root, 'bell', 5)).account;
+
+  await via(v, id, 'deposit', { round_id: 1 }, NEAR);
+  await sleep(2_500);
+  const res = await call<{ Ended?: { winner: string } }>(keeper, id, 'tick', {});
+  assert.equal(res.Ended?.winner, v);
+  // A block in round 2 drops its royalty in banner 1's chest.
+  await call(dave, id, 'deposit', { round_id: 2 }, NEAR);
+
+  type BannerJson = { banner: { prize: string; claimed: boolean; chest: string; chest_taken: string } };
+  const before = (await view<BannerJson>(id, 'get_banner', { token_id: '1' })).banner;
+  assert.equal(before.claimed, false);
+  assert.equal(before.chest, (NEAR / 100n).toString());
+  assert.equal(before.chest_taken, '0');
+
+  const { paidOut, failed } = await vanish(v, id, 'claim_prize', { token_id: '1' });
+  assert.ok(failed, 'the transfer to the vanished owner failed');
+  assert.equal(paidOut, false, 'on_payout saw the failure');
+
+  const after = (await view<BannerJson>(id, 'get_banner', { token_id: '1' })).banner;
+  assert.deepEqual(after, before, 'tower unclaimed and chest untouched again');
 });

@@ -50,8 +50,17 @@ The reserve is real NEAR, topped up with `fund_yield`. It is only ever paid into
 - The demo starts at 1 NEAR, not 0.1. A 0.1 NEAR first block pays 0.003 NEAR into the tower, too little for a banner's storage.
 - Storage is paid from fees, never from principal. Each new tent's storage, with its index entry so tents can be listed (at most 254 bytes measured), comes out of that block's pot fee. The first block of every round also sets aside 1,300 bytes (0.013 NEAR) in `storage_reserve` for the banner (at most 1,022 bytes measured). At settle, whatever the banner doesn't use goes into the tower.
 
+## Failed payouts
+
+`withdraw` and `claim_prize` zero the ledger entry, then transfer. If the transfer fails,
+`on_payout` puts the tent (and the round's `principal_total`, if it is the current round) or the
+banner's tower and chest back. A transfer only fails if the receiver is gone, and the receiver is
+always the caller, so the e2e tests in `../../keeper` use `../vanisher`: a contract that calls the
+game and deletes its own account in the same receipt. The deletion runs a block before the payout
+can land, so the transfer fails every time. The tests check both paths: a tent withdrawn from the
+current round, and a banner claim with an unclaimed tower and a chest.
+
 ## Not done
 
-- No test covers the failed-payout callback restore. A transfer only fails if the receiver is gone, and the receiver is always the caller, so a sandbox test needs a contract account that deletes itself mid-call.
 - Not deployed to testnet yet. `keeper/` has `pnpm deploy-game`; the sandbox runs the same wasm.
 - Dependencies are pinned to near-sdk 5.29.1 by `Cargo.lock`, because 5.30 requires rustc 1.95.

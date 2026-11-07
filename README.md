@@ -122,7 +122,8 @@ rest back.
 - **Late bid after the strike.** `deposit(round_id)` panics if the round moved on, refunding the
   whole bid.
 - **Double payout.** Ledger entries are zeroed before the transfer; a callback restores them if
-  the transfer fails. No test covers the restore path yet (see the contract README).
+  the transfer fails. A sandbox test covers it with an account that deletes itself before the
+  payout lands (see the keeper README).
 - **Draining a banner mid-sale.** `claim_prize` is refused while the token has approvals.
 - **Storage eating principal.** Storage is paid from the 3% fee; `new` refuses params whose first
   bid can't cover it.

@@ -1,0 +1,22 @@
+[package]
+name = "vanisher"
+version = "0.1.0"
+edition = "2021"
+description = "Test helper: calls a contract, then deletes its own account before any payout lands"
+license = "MIT"
+publish = false
+rust-version = "1.93"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+near-sdk = "5"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
