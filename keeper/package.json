@@ -13,11 +13,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "near-api-js": "7.4.0",
-    "near-sandbox": "0.3.5"
+    "near-api-js": "7.4.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "near-sandbox": "0.3.5",
     "typescript": "~7.0.2"
   }
 }
