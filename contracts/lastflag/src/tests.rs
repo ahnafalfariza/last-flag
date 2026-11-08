@@ -570,7 +570,7 @@ fn failed_payout_restores_principal_only_and_the_share_can_be_taken_again() {
     let _ = c.withdraw(1);
     let share = banner_one(&c).camp_paid;
     let principal = milli(BOB_TENT);
-    let payout = Payout::Tent { round_id: 1, principal, camp_share: share };
+    let payout = Payout::Tent { round_id: 1, principal, camp_share: share, mid_round: false };
     assert!(!c.on_payout(accounts(2), payout, principal.saturating_add(share), Err(PromiseError::Failed)));
     assert_eq!(c.get_tent(1, accounts(2)), Some(principal));
     assert_eq!(banner_one(&c).camp_paid, zero());
@@ -580,20 +580,40 @@ fn failed_payout_restores_principal_only_and_the_share_can_be_taken_again() {
 }
 
 #[test]
-fn a_tent_restored_across_the_strike_cannot_overdraw_the_pool() {
+fn a_tent_restored_across_the_strike_goes_to_the_purse_and_takes_no_share() {
     let mut c = camped_round();
     let pool = banner_one(&c).camp_pool;
     // Alice's mid-round payout failed and only comes back after the strike, so `principal`
-    // doesn't count her tent. Her pro rata would push the shares past the pool.
+    // doesn't count her tent.
     let tent = milli(960);
-    let payout = Payout::Tent { round_id: 1, principal: tent, camp_share: zero() };
+    let payout = Payout::Tent { round_id: 1, principal: tent, camp_share: zero(), mid_round: true };
     assert!(!c.on_payout(accounts(1), payout, tent, Err(PromiseError::Failed)));
+    assert_eq!(c.get_tent(1, accounts(1)), None);
+    assert_eq!(c.get_purse(accounts(1)), tent);
 
-    for (who, h) in [(1, 7), (2, 8), (3, 9)] {
+    // The real campers still get the whole pool.
+    for (who, h) in [(2, 8), (3, 9)] {
         call(&accounts(who), zero(), 34_000, h);
         let _ = c.withdraw(1);
     }
-    assert!(banner_one(&c).camp_paid <= pool);
+    let paid = banner_one(&c).camp_paid;
+    assert!(paid <= pool && pool.saturating_sub(paid) < milli(1));
+}
+
+#[test]
+fn a_tent_restored_in_the_same_round_stands_again() {
+    let mut c = setup_camp(10_000, 2_000);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    call(&accounts(2), near(2), 1_000, 3);
+    c.deposit(1);
+    call(&accounts(1), zero(), 2_000, 4);
+    let _ = c.withdraw(1);
+    let tent = milli(960);
+    let payout = Payout::Tent { round_id: 1, principal: tent, camp_share: zero(), mid_round: true };
+    assert!(!c.on_payout(accounts(1), payout, tent, Err(PromiseError::Failed)));
+    assert_eq!(c.get_tent(1, accounts(1)), Some(tent));
+    assert_eq!(c.get_purse(accounts(1)), zero());
 }
 
 #[test]

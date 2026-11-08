@@ -63,7 +63,9 @@ The reserve is real NEAR, topped up with `fund_yield`. It is only ever paid into
 `withdraw`, `withdraw_purse` and `claim_prize` zero the ledger entry, then transfer. If the
 transfer fails, `on_payout` puts the tent (and the round's `principal_total`, if it is the current
 round), the purse, or the banner's tower and chest back. A tent gets its principal back and
-`camp_paid` drops by its share, which is worked out again on the next withdraw. A transfer only fails if the receiver is gone, and the receiver is
+`camp_paid` drops by its share, which is worked out again on the next withdraw. If the strike landed
+while a mid-round pack-up was in flight, the principal goes to the account's purse instead, because
+`banner.principal` doesn't count that tent and it must not take a share. A transfer only fails if the receiver is gone, and the receiver is
 always the caller, so the e2e tests in `../../keeper` use `../vanisher`: a contract that calls the
 game and deletes its own account in the same receipt. The deletion runs a block before the payout
 can land, so the transfer fails every time. The tests check both paths: a tent withdrawn from the

@@ -244,7 +244,7 @@ pub enum TickResult {
 /// What a payout pays for, so a failed transfer can be put back.
 #[near(serializers = [json])]
 pub enum Payout {
-    Tent { round_id: u64, principal: NearToken, camp_share: NearToken },
+    Tent { round_id: u64, principal: NearToken, camp_share: NearToken, mid_round: bool },
     Banner { round_id: u64, tower: NearToken, chest: NearToken },
     Purse,
 }
@@ -440,7 +440,7 @@ impl Contract {
             }
         }
         Event::TentPacked { round_id, account_id: account.clone(), amount, camp_share }.emit();
-        let payout = Payout::Tent { round_id, principal: amount, camp_share };
+        let payout = Payout::Tent { round_id, principal: amount, camp_share, mid_round: current };
         self.pay(account, payout, amount.saturating_add(camp_share))
     }
 
@@ -491,7 +491,15 @@ impl Contract {
         match payout {
             // Only the principal goes back in the tent. The share is worked out again on the
             // next withdraw, so putting it back here would pay it twice.
-            Payout::Tent { round_id, principal, camp_share } => {
+            Payout::Tent { round_id, principal, camp_share, mid_round } => {
+                // Struck while this payout was in flight, so `banner.principal` doesn't count
+                // the tent. It can't stand again and take a share from the real campers: the
+                // NEAR waits in the purse instead.
+                if mid_round && round_id != self.round.id {
+                    let purse = self.purses.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+                    self.purses.insert(&account_id, &purse.saturating_add(principal));
+                    return false;
+                }
                 let key = (round_id, account_id);
                 let tent = self.tents.get(&key).unwrap_or(NearToken::from_yoctonear(0));
                 self.tents.insert(&key, &tent.saturating_add(principal));
@@ -691,9 +699,8 @@ impl Contract {
         charge
     }
 
-    /// A tent's part of its round's camp pool. Capped by what is left of the pool: a payout
-    /// that failed across the strike can restore a tent `banner.principal` no longer counts,
-    /// and the shares must still never add up to more than the pool.
+    /// A tent's part of its round's camp pool. Rounding already keeps the parts within the
+    /// pool; the cap makes that hold whatever the ledger says.
     fn camp_share_of(banner: &Banner, principal: NearToken) -> NearToken {
         pro_rata(banner.camp_pool, principal, banner.principal)
             .min(banner.camp_pool.saturating_sub(banner.camp_paid))

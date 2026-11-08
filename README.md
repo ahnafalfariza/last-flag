@@ -133,8 +133,9 @@ chance to win, and gets the rest back.
   the transfer fails. A sandbox test covers it with an account that deletes itself before the
   payout lands (see the keeper README).
 - **Double camp share.** A failed tent payout restores the principal only, and the share is worked
-  out again on the next withdraw. Shares are capped by what is left of the pool, so they can never
-  add up to more than it.
+  out again on the next withdraw. A mid-round pack-up that fails after the strike goes to the
+  purse, so it can't take a share from the real campers. Shares can never add up to more than the
+  pool.
 - **A stolen one-tap key.** It lives in the browser's local storage. On chain it can only call
   `bid`, attach no deposit, and spend its 0.25 NEAR gas allowance. It can turn the war chest into
   bids, which costs the 4% fee per bid, but the 96% still lands in the owner's tent and
