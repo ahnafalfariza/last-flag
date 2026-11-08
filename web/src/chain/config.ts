@@ -34,5 +34,11 @@ export const EXPLORER: string | null =
 export const MARKETPLACE_ID: string = env.VITE_MARKETPLACE_ID || '';
 export const MARKETPLACE_MSG: string = env.VITE_MARKETPLACE_MSG || '{"sale_conditions":"{price}"}';
 
+/**
+ * Extra attached to a bid, as a percent of the minimum, so it still lands if someone else bids
+ * first. The contract charges the minimum and refunds the rest.
+ */
+export const BID_HEADROOM_PCT = 10;
+
 /** Live when a contract is configured, unless the page asks for the simulator. */
 export const LIVE = !!CONTRACT_ID && !new URLSearchParams(location.search).has('sim');
