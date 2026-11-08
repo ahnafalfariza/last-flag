@@ -21,6 +21,9 @@ interface Shot {
   right?: boolean;
 }
 
+const campLine = (p: Params) =>
+  p.campShareBps > 0 ? ` ${p.campShareBps / 100}% of it goes to the campfire, split by everyone still camped at the end.` : '';
+
 const SHOTS: Shot[] = [
   {
     key: 'bid', title: 'Bid', src: '/img/hill_day.jpg', focus: [0.6, 0], zoom: 1.5, lift: true,
@@ -44,8 +47,8 @@ const SHOTS: Shot[] = [
     key: 'win', title: 'The win', src: '/img/hill_night.jpg', focus: [0.63, 0.36], zoom: 1.5, night: true, flash: true,
     line: 'Lightning strikes. Whoever leads wins the prize.',
     sub: (p) => p.yieldPerSec > 0
-      ? 'The prize is the fees from every bid, plus the yield everyone\'s deposits earn while the round runs.'
-      : 'The prize is the fees from every bid in the round.',
+      ? `The prize is the fees from every bid, plus the yield everyone's deposits earn while the round runs.${campLine(p)}`
+      : `The prize is the fees from every bid in the round.${campLine(p)}`,
     fact: (p) => `always ends within ${p.hardCapMs / 60000} min of the last bid`,
   },
   {
@@ -57,7 +60,7 @@ const SHOTS: Shot[] = [
   {
     key: 'deposit', title: 'Your deposit', src: '/img/hill_day.jpg', focus: [0.25, 0.95], zoom: 1.5,
     line: 'Everyone gets their money back.',
-    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every bid is your deposit. It${p.yieldPerSec > 0 ? ' earns yield for the prize while you wait and' : ''} comes back in full after the round. If you're not in the lead, you can withdraw any time.`,
+    sub: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of every bid is your deposit. It${p.yieldPerSec > 0 ? ' earns yield for the prize while you wait and' : ''} comes back in full after the round. If you're not in the lead, you can withdraw any time${p.campShareBps > 0 ? ', but you give up your camp share' : ''}.`,
     fact: (p) => `${100 - (p.potFeeBps + p.royaltyFeeBps) / 100}% of each bid comes back`,
   },
 ];

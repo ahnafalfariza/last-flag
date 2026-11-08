@@ -12,6 +12,8 @@ export interface Params {
   /** Mock yield adapter: fraction of staked principal accrued to the prize per second. */
   yieldPerSec: number;
   keeperReward: number;
+  /** Share of the tower split among the tents still standing at the strike. */
+  campShareBps: number;
 }
 
 export interface Deposit {
@@ -41,6 +43,8 @@ export interface Round {
    * keeps tents, not individual blocks. When absent, tents are summed from `deposits`.
    */
   tents?: { account: string; principal: number }[];
+  /** Settled rounds: what the standing tents split, pro rata against `principalTotal`. */
+  campPool?: number;
 }
 
 /** A trophy NFT, in hill words. */
@@ -52,6 +56,8 @@ export interface Banner {
   /** Royalty received from the next round, total. */
   chest: number;
   chestTaken: number;
+  /** Taken out of the tower at the strike for the tents still standing. */
+  campPool?: number;
   blocks: number;
   principal: number;
   durationMs: number;
