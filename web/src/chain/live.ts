@@ -1,7 +1,7 @@
 import { myCampShare, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import type { Banner, Deposit, FeedEvent, Params, Round, ThunderEvent } from '../game/types';
-import { CONTRACT_ID, MARKETPLACE_MSG } from './config';
+import { BID_HEADROOM_PCT, CONTRACT_ID, MARKETPLACE_MSG } from './config';
 import { balanceOf, hasContract, toNear, view } from './rpc';
 import { panicText, restore, signIn, type Signer } from './signer';
 
@@ -357,7 +357,7 @@ export function startLive() {
       // The contract charges the minimum when the bid lands and refunds the rest, so allow a
       // little headroom in case someone else's bid lands first.
       const minimum = BigInt(last.min_deposit);
-      const headroom = (minimum * 110n) / 100n;
+      const headroom = (minimum * BigInt(100 + BID_HEADROOM_PCT)) / 100n;
       try {
         const roundId = last.id;
         const held = purseYocto;

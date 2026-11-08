@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../game/store';
 import { near } from '../game/format';
+import { BID_HEADROOM_PCT } from '../chain/config';
 import { Bolt, ChestTab } from './Chest';
 
 /** Bottom bar: the war chest, how much to bid, one button, and what the bid really costs. */
@@ -32,6 +33,9 @@ export function ActionTray({ onManageChest }: { onManageChest: () => void }) {
   const leading = round.leader === me;
   const fee = amount * (params.potFeeBps + params.royaltyFeeBps) / 10_000;
   const oneTapReady = connected && oneTap && purse >= amount;
+  // A wallet bid attaches headroom, so the wallet asks for more than the bid. A war chest bid attaches nothing.
+  const fromChest = connected && purse >= round.minDeposit;
+  const attached = round.minDeposit * (1 + BID_HEADROOM_PCT / 100);
 
   const go = () => {
     if (!connected) { connect(); return; }
@@ -55,7 +59,11 @@ export function ActionTray({ onManageChest }: { onManageChest: () => void }) {
         <div className="picker live-pick">
           <span className="legend">Your bid</span>
           <b>{near(min)} NEAR</b>
-          <small title="Up to 10% extra is attached in case someone bids first. Whatever isn't charged comes straight back.">Charged when it lands. Extra comes back.</small>
+          <small>
+            {fromChest
+              ? 'Charged from your war chest when it lands.'
+              : `Your wallet will show ${near(attached, 4)} NEAR: ${BID_HEADROOM_PCT}% extra in case someone bids first. Whatever isn't charged comes straight back.`}
+          </small>
         </div>
       ) : (
       <fieldset className="picker">
