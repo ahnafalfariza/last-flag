@@ -14,6 +14,8 @@ export interface Signer {
   enableOneTap(): Promise<void>;
   /** Removes the key from the account and from this browser. */
   disableOneTap(): Promise<void>;
+  /** Clears the key from this browser only. It stays on the account, but nobody holds it. */
+  forgetOneTap(): void;
 }
 
 const GAS = (tgas: number) => (BigInt(tgas) * 10n ** 12n).toString();
@@ -33,12 +35,22 @@ const oneTapSlot = (accountId: string) => `lastflag:one-tap:${NETWORK}:${CONTRAC
 const readOneTap = (accountId: string): string | null => {
   try { return localStorage.getItem(oneTapSlot(accountId)); } catch { return null; }
 };
+/** False if the browser refused, for example in a private window. */
 const writeOneTap = (accountId: string, key: string | null) => {
   try {
     if (key) localStorage.setItem(oneTapSlot(accountId), key);
     else localStorage.removeItem(oneTapSlot(accountId));
-  } catch { /* private window: one-tap just stays off */ }
+    return true;
+  } catch {
+    return false;
+  }
 };
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e));
+
+/** The key is no longer on the account. Wallets relay protocol names, near-api-js has its own wording. */
+const keyIsGone = (e: unknown) => /access key \S+ does not exist|AccessKeyNotFound|UNKNOWN_ACCESS_KEY|DeleteKeyDoesNotExist/i.test(errorText(e));
+const outOfAllowance = (e: unknown) => /not\s*enough\s*allowance/i.test(errorText(e));
 
 /** The one-tap half of a Signer. `addKey` and `removeKey` are how this signer changes account keys. */
 const oneTapMethods = (
@@ -46,7 +58,7 @@ const oneTapMethods = (
   call: Signer['call'],
   addKey: (publicKey: string) => Promise<unknown>,
   removeKey: (publicKey: string) => Promise<unknown>,
-): Pick<Signer, 'bid' | 'oneTap' | 'enableOneTap' | 'disableOneTap'> => ({
+): Pick<Signer, 'bid' | 'oneTap' | 'enableOneTap' | 'disableOneTap' | 'forgetOneTap'> => ({
   oneTap: () => readOneTap(accountId) !== null,
   async bid(roundId, maxYocto) {
     const args = { round_id: roundId, max: maxYocto.toString() };
@@ -59,7 +71,8 @@ const oneTapMethods = (
       return decodeOutcome<string>(outcome as unknown as Outcome);
     } catch (e) {
       // Removed elsewhere or out of allowance: forget it, so the next bid can use the wallet.
-      if (/AccessKeyNotFound|NotEnoughAllowance|access key/i.test(e instanceof Error ? e.message : String(e))) {
+      // A nonce clash from two quick bids is not this, and the key must survive it.
+      if (keyIsGone(e) || outOfAllowance(e)) {
         writeOneTap(accountId, null);
         throw new Error('The one-tap key no longer works. Turn one-tap on again.');
       }
@@ -69,14 +82,28 @@ const oneTapMethods = (
   async enableOneTap() {
     const { KeyPair } = await import('near-api-js');
     const pair = KeyPair.fromRandom('ed25519');
-    await addKey(pair.getPublicKey().toString());
-    writeOneTap(accountId, pair.toString());
+    // Saved first: a key added on chain that this browser can't keep would be lost for good.
+    if (!writeOneTap(accountId, pair.toString())) throw new Error("This browser is blocking storage, so one-tap can't stay on.");
+    try {
+      await addKey(pair.getPublicKey().toString());
+    } catch (e) {
+      writeOneTap(accountId, null);
+      throw e;
+    }
   },
   async disableOneTap() {
     const key = readOneTap(accountId);
     if (!key) return;
     const { KeyPair } = await import('near-api-js');
-    await removeKey(KeyPair.fromString(key as `ed25519:${string}`).getPublicKey().toString());
+    try {
+      await removeKey(KeyPair.fromString(key as `ed25519:${string}`).getPublicKey().toString());
+    } catch (e) {
+      // Already removed elsewhere is what was wanted. Anything else leaves the key in place.
+      if (!keyIsGone(e)) throw e;
+    }
+    writeOneTap(accountId, null);
+  },
+  forgetOneTap() {
     writeOneTap(accountId, null);
   },
 });

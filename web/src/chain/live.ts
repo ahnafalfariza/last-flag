@@ -1,4 +1,4 @@
-import { useGame } from '../game/store';
+import { myCampShare, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import type { Banner, Deposit, FeedEvent, Params, Round, ThunderEvent } from '../game/types';
 import { CONTRACT_ID, MARKETPLACE_MSG } from './config';
@@ -166,11 +166,12 @@ async function refreshSlow() {
     view<TokenJson[]>(C(), 'nft_tokens', { from_index: '0', limit: 100 }),
     me ? balanceOf(me) : Promise.resolve(null),
     me ? view<MyTentJson[]>(C(), 'get_tents_of', { account_id: me, rounds: 20 }) : Promise.resolve([]),
-    // A build of the contract from before the purse doesn't have this view.
-    me ? view<Yocto>(C(), 'get_purse', { account_id: me }).catch(() => '0') : Promise.resolve('0'),
+    // Null keeps the last value: a failed read must not look like an empty purse, which would
+    // send the next bid through the wallet. A build from before the purse just stays at 0.
+    me ? view<Yocto>(C(), 'get_purse', { account_id: me }).catch(() => null) : Promise.resolve('0'),
   ]);
   myTents = mine;
-  purseYocto = BigInt(purse);
+  if (purse !== null) purseYocto = BigInt(purse);
   const listed = new Map(tokens.map((t) => [Number(t.token_id), Object.keys(t.approved_account_ids ?? {})]));
   set({
     banners: banners.map((b) => ({ ...toBanner(b), listedWith: listed.get(Number(b.token_id)) ?? [] })).sort((a, b) => a.id - b.id),
@@ -309,10 +310,14 @@ export function startLive() {
       signIn().then(onSignedIn, (e) => pushFeed('info', panicText(e)));
     },
     disconnect: () => {
+      // On a shared computer the next person must not be able to bid from this purse.
+      const hadKey = signer?.oneTap() ?? false;
+      signer?.forgetOneTap();
       void signer?.signOut();
       signer = null;
       purseYocto = 0n;
       set({ me: '', connected: false, balance: 0, purse: 0, oneTap: false });
+      if (hadKey) pushFeed('info', 'Disconnected. The one-tap key was cleared from this browser.');
     },
 
     fundPurse: async (amount) => {
@@ -342,6 +347,7 @@ export function startLive() {
         pushFeed('info', on ? 'One-tap is on. Purse bids need no wallet popup.' : 'One-tap is off.');
         return null;
       } catch (e) {
+        set({ oneTap: signer?.oneTap() ?? false });
         return panicText(e);
       }
     },
@@ -379,9 +385,11 @@ export function startLive() {
       }
     },
     withdraw: async (roundId) => {
-      const amount = roundId === last?.id
+      const over = get().settled.find((r) => r.id === roundId);
+      const deposit = roundId === last?.id
         ? toNear(tents.find((t) => t.account_id === get().me)?.amount ?? '0')
         : toNear(myTents.find((t) => t.round_id === roundId)?.amount ?? '0');
+      const amount = deposit + (over ? myCampShare(over, get().me) : 0);
       try {
         const ok = await send('withdraw', (s) => s.call<boolean>('withdraw', { round_id: roundId }));
         if (ok === false) throw new Error('The transfer failed, your tent is still standing.');

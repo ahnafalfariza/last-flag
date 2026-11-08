@@ -264,8 +264,7 @@ export const useGame = create<Store>((set, get) => ({
     }
     // Settle: mint banner to the leader, credit the prize, open the next round.
     const winner = round.leader ?? by;
-    const campPool = round.prize * params.campShareBps / 10_000;
-    const prize = round.prize - campPool;
+    const { reward, campfire: campPool, winnerTake: prize } = towerSplit(round.prize, params);
     const banner: Banner = {
       id: round.id,
       owner: winner,
@@ -289,7 +288,7 @@ export const useGame = create<Store>((set, get) => ({
       thunder: [ev, ...s.thunder].slice(0, 30),
       strike: { round: round.id, winner, prize, blocks: round.deposits.length, by, at: now },
       flash: 1,
-      balance: by === s.me ? s.balance + params.keeperReward : s.balance,
+      balance: by === s.me ? s.balance + reward : s.balance,
       whaleThreshold: 0.6,
       feed: [
         { id: id(), at: now, kind: 'open' as const, text: `Round ${round.id + 1} is open. Bid to take the lead.` },
@@ -483,6 +482,14 @@ export const myStake = (round: Round, me: string) =>
   round.tents
     ? round.tents.filter((t) => t.account === me).reduce((a, t) => a + t.principal, 0)
     : round.deposits.filter((d) => d.account === me && !d.withdrawn).reduce((a, d) => a + d.principal, 0);
+
+/** How a tower splits at the strike, in the contract's order: the ringer, then the campfire, then the winner. */
+export const towerSplit = (prize: number, params: Params) => {
+  const reward = Math.min(params.keeperReward, prize * 0.1);
+  const winnings = prize - reward;
+  const campfire = winnings * params.campShareBps / 10_000;
+  return { reward, campfire, winnerTake: winnings - campfire };
+};
 
 /** Your part of a settled round's camp pool. */
 export const myCampShare = (round: Round, me: string) =>

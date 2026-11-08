@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { campers, graceFraction, myCampShare, myStake, useGame } from '../game/store';
+import { campers, graceFraction, myCampShare, myStake, towerSplit, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import { DAY, fitRender, NIGHT, PHONE, PHONE_NIGHT, placePoint, usePhone, useInnerTop, useStageSize, type Landmarks, type Placement } from './stage';
 import { ActionTray } from './ActionTray';
@@ -111,8 +111,7 @@ export function HillView() {
   const leader = leading ? 'You' : short(round.leader);
   const oldStakes = settled.map((r) => ({ id: r.id, amount: myStake(r, me) + myCampShare(r, me) })).filter((x) => x.amount > 0);
   // What the tower would split into if the round ended now.
-  const campfire = round.prize * params.campShareBps / 10_000;
-  const winnerTake = round.prize - campfire;
+  const { campfire, winnerTake } = towerSplit(round.prize, params);
   const shareOf = (principal: number) => (round.principalTotal > 0 ? campfire * principal / round.principalTotal : 0);
   const myShare = shareOf(stake);
   const camp = campers(round).sort((a, b) => (a.account === me ? -1 : b.account === me ? 1 : b.principal - a.principal));
