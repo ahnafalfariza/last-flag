@@ -79,6 +79,7 @@ export const reason = (e: unknown) => {
 
 export interface RoundJson {
   id: number;
+  opened_at_ms: number;
   leader: string | null;
   prize: string;
   min_deposit: string;

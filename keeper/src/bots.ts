@@ -8,6 +8,9 @@ import { CONTRACT, env, NETWORK, nearStr, provider, reason, role, sleep, view, y
  * ~45 blocks so the round converges. When a new round opens they withdraw their principal from
  * every finished one and claim what their banners hold, so they can keep playing.
  *
+ * Set BOT_ROUND_MINUTES for long rounds: the bots then hold each round open that long, then stop
+ * so the storm can end it.
+ *
  *   pnpm bots setup   create whale/sniper/dibs/moss/pip/rook as sub-accounts of FUNDER_ACCOUNT,
  *                     BOT_FUND NEAR each (default 15), keys saved to .bots.<network>.json
  *   pnpm bots         play
@@ -17,6 +20,8 @@ import { CONTRACT, env, NETWORK, nearStr, provider, reason, role, sleep, view, y
 
 const NAMES = ['whale', 'sniper', 'dibs', 'moss', 'pip', 'rook'];
 const FILE = new URL(`../.bots.${NETWORK}.json`, import.meta.url);
+/** Left in the account when bidding. A bid's 100 Tgas prepays about 0.1 NEAR up front. */
+const GAS_RESERVE = yocto(0.2);
 
 interface BotKey { account: string; key: string }
 interface BannerView { token_id: string; owner_id: string; banner: { prize: string; claimed: boolean; chest: string; chest_taken: string } }
@@ -48,6 +53,8 @@ async function play() {
   const byName = (n: string) => bots.find((b) => b.name === n);
   const crowd = bots.filter((b) => !['whale', 'sniper'].includes(b.name));
   console.log(`${bots.length} bots on ${NETWORK}, contract ${CONTRACT()}`);
+  const paceMs = Number(env.BOT_ROUND_MINUTES ?? 0) * 60_000;
+  const graceMs = paceMs ? (await view<{ grace_ms: number }>('get_params')).grace_ms : 0;
 
   let whaleAt = 0;
   let round = 0;
@@ -58,8 +65,16 @@ async function play() {
 
   const bid = async (bot: (typeof bots)[number], r: RoundView['round']) => {
     // Attach 3x for the whale: the contract still charges the minimum and refunds the rest.
-    const attach = (BigInt(r.min_deposit) * (bot.name === 'whale' ? 300n : 110n)) / 100n;
+    const minimum = BigInt(r.min_deposit);
+    const wanted = (minimum * (bot.name === 'whale' ? 300n : 110n)) / 100n;
     try {
+      // The headroom is optional, so a bot that can't cover it attaches what it has.
+      const spendable = (await bot.acc.getState()).balance.available - GAS_RESERVE;
+      if (spendable < minimum) {
+        console.warn(`${bot.name} can't afford ${nearStr(minimum)}, skipping`);
+        return;
+      }
+      const attach = wanted < spendable ? wanted : spendable;
       await bot.acc.callFunction({ contractId: CONTRACT(), methodName: 'deposit', args: { round_id: r.id }, deposit: attach, gas: 100n * 10n ** 12n });
       bids++;
       console.log(`round ${r.id}: ${bot.name} bid ${nearStr(r.min_deposit)} (block ${r.blocks + 1})`);
@@ -126,6 +141,15 @@ async function play() {
       lastBeat = Date.now();
     }
     if (v.hard_cap_reached) continue;
+    if (paceMs && v.status !== 'Open') {
+      // About one bid every half a sun, plus a rescue bid just before it sets.
+      const due = r.grace_until_ms - v.now_ms < graceMs / 10 || Math.random() < STEP_MS / (graceMs / 2);
+      if (due && v.now_ms - r.opened_at_ms < paceMs) {
+        const others = bots.filter((b) => b.acc.accountId !== r.leader);
+        await bid(others[Math.floor(Math.random() * others.length)], r);
+      }
+      continue;
+    }
     const dt = STEP_MS / 1000;
     const quiet = r.blocks > 45 ? 0.3 : 1;
     const roll = Math.random();
