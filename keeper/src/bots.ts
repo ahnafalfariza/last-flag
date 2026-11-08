@@ -5,7 +5,8 @@ import { CONTRACT, env, NETWORK, nearStr, provider, reason, role, sleep, view, y
 /**
  * Demo players for a live round, the same cast as the simulator: whale bids big when the tower
  * passes a threshold, sniper waits for the storm, the crowd arrives at random. They go quiet after
- * ~45 blocks so the round converges.
+ * ~45 blocks so the round converges. When a new round opens they withdraw their principal from
+ * every finished one, so they can keep playing.
  *
  *   pnpm bots setup   create whale/sniper/dibs/moss/pip/rook as sub-accounts of FUNDER_ACCOUNT,
  *                     BOT_FUND NEAR each (default 15), keys saved to .bots.<network>.json
@@ -66,12 +67,34 @@ async function play() {
     }
   };
 
+  // A failed withdrawal leaves the tent listed, so the next round's sweep retries it. The first
+  // sweep runs at startup and collects anything left from before a restart.
+  const packUp = async (current: number) => {
+    for (const bot of bots) {
+      try {
+        const tents = await view<{ round_id: number; amount: string }[]>('get_tents_of', { account_id: bot.acc.accountId, rounds: 20 });
+        for (const t of tents.filter((tent) => tent.round_id < current)) {
+          await bot.acc.callFunction({ contractId: CONTRACT(), methodName: 'withdraw', args: { round_id: t.round_id }, gas: 100n * 10n ** 12n });
+          console.log(`round ${t.round_id}: ${bot.name} withdrew ${nearStr(t.amount)}`);
+        }
+      } catch (e) {
+        console.warn(`${bot.name} withdraw failed: ${reason(e)}`);
+      }
+    }
+  };
+
   for (;;) {
     await sleep(STEP_MS);
     let v: RoundView;
     try { v = await view<RoundView>('get_round'); } catch (e) { console.warn(reason(e)); continue; }
     const r = v.round;
-    if (r.id !== round) { round = r.id; whaleAt = 0.05; console.log(`round ${r.id}: ${v.status}`); }
+    if (r.id !== round) {
+      round = r.id;
+      whaleAt = 0.05;
+      console.log(`round ${r.id}: ${v.status}`);
+      await packUp(r.id);
+      continue; // the sweep takes a while, so read the round again before bidding
+    }
     if (Date.now() - lastBeat >= HEARTBEAT_MS) {
       console.log(`alive: round ${r.id} ${v.status}, leader ${r.leader ?? 'none'}, ${bids} bids so far`);
       lastBeat = Date.now();
