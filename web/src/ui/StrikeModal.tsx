@@ -1,4 +1,4 @@
-import { myStake, useGame } from '../game/store';
+import { myCampShare, myStake, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import { Tracker } from './Tracker';
 
@@ -20,6 +20,9 @@ export function StrikeModal() {
   const round = settled.find((r) => r.id === strike.round);
   const banner = banners.find((b) => b.id === strike.round);
   const back = round ? myStake(round, me) : 0;
+  const share = round ? myCampShare(round, me) : 0;
+  const pool = banner?.campPool ?? 0;
+  const prizeReady = mine && banner && !banner.claimed ? banner.prize : 0;
   const how = banner?.endedBy === 'hard cap'
     ? 'Sudden death hit its time limit'
     : `Lightning hit on check ${banner?.ticks ?? round?.ticks ?? '?'}`;
@@ -33,15 +36,25 @@ export function StrikeModal() {
           <p className="over-win">{mine ? 'You won' : `${who} won`} {near(strike.prize)} NEAR</p>
           <p className="over-why">
             {how}, with {mine ? 'you' : who} in the lead after {strike.blocks} bids. {mine ? 'You' : who} also {mine ? 'get' : 'gets'} Banner {strike.round}, a trophy that collects {params.royaltyFeeBps / 100}% of every bid in round {strike.round + 1}.
+            {pool > 0 && ` Players still camped split another ${near(pool)} NEAR.`}
           </p>
         </div>
-        {(back > 0 || (mine && banner && !banner.claimed)) && (
-          <div className="over-back">
-            <div>
-              <span>{mine && banner && !banner.claimed ? 'Prize and deposit ready' : 'Your deposit is ready'}</span>
-              <b>{near(back + (mine && banner && !banner.claimed ? banner.prize : 0))} NEAR</b>
+        {(back > 0 || prizeReady > 0) && (
+          <div className="over-card">
+            {share > 0 && (
+              <dl className="over-lines">
+                {prizeReady > 0 && <><dt>The prize</dt><dd>{near(prizeReady)} NEAR</dd></>}
+                <dt>Your deposit</dt><dd>{near(back)} NEAR</dd>
+                <dt>Your camp share ({Math.round(share / pool * 100)}%)</dt><dd>+{near(share)} NEAR</dd>
+              </dl>
+            )}
+            <div className="over-back">
+              <div>
+                <span>{share > 0 ? 'Ready for you' : prizeReady > 0 ? 'Prize and deposit ready' : 'Your deposit is ready'}</span>
+                <b>{near(back + share + prizeReady)} NEAR</b>
+              </div>
+              <button onClick={async () => { if (back > 0) await withdraw(strike.round, me); if (mine) await claimTower(strike.round); }}>Take it</button>
             </div>
-            <button onClick={async () => { if (back > 0) await withdraw(strike.round, me); if (mine) await claimTower(strike.round); }}>Take it</button>
           </div>
         )}
         <div className="modal-actions">

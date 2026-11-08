@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { campers, graceFraction, myStake, useGame } from '../game/store';
+import { campers, graceFraction, myCampShare, myStake, towerSplit, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import { DAY, fitRender, NIGHT, PHONE, PHONE_NIGHT, placePoint, usePhone, useInnerTop, useStageSize, type Landmarks, type Placement } from './stage';
 import { ActionTray } from './ActionTray';
+import { ChestDialog } from './Chest';
+import { LeaveDialog } from './LeaveDialog';
 import { Tracker } from './Tracker';
 
 const Block = ({ size = 34 }: { size?: number }) => (
@@ -56,12 +58,14 @@ export function HillView() {
   const [statusEl, setStatusEl] = useState<HTMLElement | null>(null);
   const [seen, setSeen] = useState(readSeen);
   const [details, setDetails] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [chestOpen, setChestOpen] = useState(false);
   const armed = round.state === 'Armed';
   const nightLm = phone ? PHONE_NIGHT : NIGHT;
   const lm: Landmarks = armed ? nightLm : phone ? PHONE : DAY;
   // Keep the flag below the header and the tents above the bid bar. The wide renders have scenery
   // to spare around the original art, so the hill can shrink a little and still fill the screen.
-  const trayTop = useInnerTop(stageEl, '.bidbar') ?? size.h - 134;
+  const trayTop = useInnerTop(stageEl, connected && !phone ? '.chest-tab' : '.bidbar') ?? size.h - 134;
   const fit = (r: Landmarks) => (phone ? fitRender(r, size, -Infinity, Infinity) : fitRender(r, size, HEADER_CLEAR, trayTop - TRAY_GAP));
   const dayLm = phone ? PHONE : DAY;
   const dayFit = fit(dayLm);
@@ -105,7 +109,11 @@ export function HillView() {
   const stake = myStake(round, me);
   const leading = round.leader === me;
   const leader = leading ? 'You' : short(round.leader);
-  const oldStakes = settled.map((r) => ({ id: r.id, amount: myStake(r, me) })).filter((x) => x.amount > 0);
+  const oldStakes = settled.map((r) => ({ id: r.id, amount: myStake(r, me) + myCampShare(r, me) })).filter((x) => x.amount > 0);
+  // What the tower would split into if the round ended now.
+  const { campfire, winnerTake } = towerSplit(round.prize, params);
+  const shareOf = (principal: number) => (round.principalTotal > 0 ? campfire * principal / round.principalTotal : 0);
+  const myShare = shareOf(stake);
   const camp = campers(round).sort((a, b) => (a.account === me ? -1 : b.account === me ? 1 : b.principal - a.principal));
   const shown = camp.slice(0, lm.tents.length);
   const extra = camp.length - shown.length;
@@ -164,10 +172,27 @@ export function HillView() {
           const prev = i > 0 ? at(lm.tents[i - 1]) : null;
           lifted = !!prev && Math.abs(p.x - prev.x) < TAG_ROOM && !lifted;
           const mine = c.account === me;
-          return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: tentY(p.y) - (lifted ? 28 : 0) }}>{mine ? 'You' : short(c.account)}</div>;
+          const share = shareOf(c.principal);
+          return <div key={c.account} className={`tag anchor ${mine ? 'tag-me' : ''}`} style={{ left: p.x, top: tentY(p.y) - (lifted ? 28 : 0) }}>{mine ? 'You' : short(c.account)}{share >= 0.005 && <span className="tag-share">+{near(share)}</span>}</div>;
         });
       })()}
       {extra > 0 && size.w > 0 && (() => { const p = at(lm.tents[lm.tents.length - 1]); return <div className="tag anchor" style={{ left: phone ? p.x : p.x + 64, top: phone ? p.y + 28 : tentY(p.y) }}>+{extra} player{extra === 1 ? '' : 's'}</div>; })()}
+
+      {/* the campfire sits above the tents it is split between */}
+      {!phone && campfire > 0 && shown.length > 0 && size.w > 0 && (() => {
+        const points = shown.map((_, i) => at(lm.tents[i]));
+        const x = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+        const y = Math.min(...points.map((p) => tentY(p.y))) - 44;
+        return (
+          <div className="campfire" style={{ left: x, top: y }}>
+            <svg aria-hidden="true" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3c1 3 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 1-3 0-6 1-9z" /></svg>
+            <div>
+              <b>Campfire {near(campfire)} NEAR</b>
+              <span>Split by everyone still camped when lightning hits</span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* the one card that says what is happening */}
       <section ref={setStatusEl} className={`card status-card ${armed ? 'armed' : ''}`} aria-label="Round status">
@@ -184,8 +209,11 @@ export function HillView() {
           <div className="who">
             <span className="sub-l">{armed ? <>If it ends now, <b>{leading ? 'you win' : `${leader} wins`}</b></> : <><b>{leader}</b> {leading ? "are in the lead and would win" : 'is in the lead and would win'}</>}</span>
             {/* With yield on, the tower grows by fractions of a cent a second: show enough digits to see it. */}
-            <span className="prize">{near(round.prize, params.yieldPerSec > 0 ? 4 : 2)} NEAR</span>
+            <span className="prize">{near(winnerTake, params.yieldPerSec > 0 ? 4 : 2)} NEAR</span>
           </div>
+        )}
+        {stake > 0 && campfire > 0 && (
+          <div className="camp-strip"><span>Deposit {near(stake)}, camp share so far</span><b>+{near(myShare)} NEAR</b></div>
         )}
         {round.state === 'Live' && round.graceUntil !== null && (
           <div className="timer">
@@ -234,7 +262,7 @@ export function HillView() {
             <ol>
               <li>Bid to take the lead. Each bid has to be {params.growthBps / 100}% bigger than the one before.</li>
               <li>When nobody bids for {graceSecs === 60 ? 'a minute' : `${graceSecs} seconds`}, sudden death starts. The round can end any second.</li>
-              <li>Whoever leads at the end wins the prize. Everyone gets {100 - (params.potFeeBps + params.royaltyFeeBps) / 100}% of their bids back.</li>
+              <li>Whoever leads at the end wins the prize. Everyone gets {100 - (params.potFeeBps + params.royaltyFeeBps) / 100}% of their bids back{params.campShareBps > 0 ? `, and players still camped split ${params.campShareBps / 100}% of the tower` : ''}.</li>
             </ol>
             <div className="explain-acts">
               <button onClick={dismiss}>Got it</button>
@@ -248,8 +276,10 @@ export function HillView() {
               <>
                 <span className="sub-l">Your deposit</span>
                 <span className="amt">{near(stake)} NEAR</span>
-                <p className="note">{leading ? "You're in the lead, so it stays in until someone outbids you or the round ends." : "You're not leading, so you can take it back now or leave it until the round ends."}</p>
-                {!leading && <button className="ghost" onClick={() => withdraw(round.id, me)}>Withdraw {near(stake)} NEAR</button>}
+                <p className="note">{leading ? "You're in the lead, so it stays in until someone outbids you or the round ends." : campfire > 0 ? "You're at the campfire. Leave now and you get your deposit but lose your seat." : "You're not leading, so you can take it back now or leave it until the round ends."}</p>
+                {!leading && (campfire > 0
+                  ? <button className="ghost" onClick={() => setLeaving(true)}>Leave the camp</button>
+                  : <button className="ghost" onClick={() => withdraw(round.id, me)}>Withdraw {near(stake)} NEAR</button>)}
               </>
             )}
             {oldStakes.map((o) => (
@@ -261,7 +291,11 @@ export function HillView() {
 
       {latest && <div key={latest.id} className={`ticker ${latest.kind}`} role="status">{latest.text}</div>}
 
-      <ActionTray />
+      <ActionTray onManageChest={() => setChestOpen(true)} />
+      {chestOpen && <ChestDialog onClose={() => setChestOpen(false)} />}
+      {leaving && stake > 0 && !leading && (
+        <LeaveDialog stake={stake} share={myShare} onStay={() => setLeaving(false)} onLeave={() => { setLeaving(false); void withdraw(round.id, me); }} />
+      )}
     </div>
   );
 }

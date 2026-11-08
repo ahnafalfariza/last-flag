@@ -187,6 +187,58 @@ p, h1, h2 { margin: 0; }
 .deposit .amt { font: 600 32px/1 var(--display); color: #9fd8ff; font-variant-numeric: tabular-nums; }
 .deposit .ghost { min-height: 44px; border-radius: 12px; }
 
+/* the campfire: what the tents still standing will split */
+.campfire { position: absolute; z-index: 4; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 12px; width: max-content; max-width: 340px; padding: 10px 16px; border-radius: 18px; background: rgba(8, 12, 22, 0.9); border: 1.5px solid #ffb066; color: #ffb066; transition: left 0.6s ease, top 0.6s ease; }
+.campfire svg { flex: none; }
+.campfire div { display: flex; flex-direction: column; gap: 2px; }
+.campfire b { font: 600 22px/1.1 var(--display); color: #ffcf9e; font-variant-numeric: tabular-nums; }
+.campfire span { font-size: 13px; font-weight: 600; line-height: 1.35; color: #e6ecf5; }
+.tag-share { margin-left: 5px; color: #ffcf9e; font-variant-numeric: tabular-nums; }
+.tag-me .tag-share { color: #fff; }
+.camp-strip { display: none; }
+
+/* the war chest tab, on top of the bid bar */
+.stage:has(.chest-tab) { --tray-h: 188px; }
+.chest-tab { position: absolute; left: 24px; bottom: 100%; display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-radius: 16px 16px 0 0; background: rgba(14, 18, 26, 0.9); border: 1px solid rgba(255, 255, 255, 0.14); border-bottom: 0; white-space: nowrap; }
+.night .chest-tab { background: rgba(8, 12, 22, 0.92); }
+.chest-label, .chest-hint { font-size: 14px; color: #c9d2e0; }
+.chest-amount { font: 600 22px var(--display); color: var(--gold); font-variant-numeric: tabular-nums; }
+.chest-btn { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 11px; border: 1.5px solid rgba(255, 255, 255, 0.28); background: transparent; color: #fff; font: 600 15px var(--display); }
+.chest-btn:disabled { opacity: 0.5; }
+.chest-btn.chest-on { border-color: transparent; background: rgba(122, 203, 90, 0.18); color: #b9eaa3; }
+.chest-narrow { display: none; }
+.bidbar .primary.one-tap { display: flex; align-items: center; justify-content: center; gap: 10px; }
+
+/* cream dialogs: war chest setup, stay or leave */
+.dialog-title { font: 600 34px/1.15 var(--display); }
+.dialog-error { font-size: 14px; font-weight: 700; color: #9c2a1e; }
+.dialog-foot { margin-top: -8px; font-size: 13px; font-weight: 600; text-align: center; color: #6b5a44; }
+.dialog-secondary { min-height: 56px; padding: 0 20px; border-radius: 18px; border: 1.5px solid #8a7558; background: transparent; color: #2b2116; font: 600 17px var(--display); white-space: nowrap; }
+.chest-presets { margin: 0; padding: 0; border: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.chest-presets legend { margin-bottom: 8px; font-size: 14px; color: #6b5a44; }
+.chest-presets button { min-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 14px; border: 1.5px solid #8a7558; background: transparent; color: #2b2116; }
+.chest-presets button[aria-pressed='true'] { border: 2px solid #2b2116; background: #f1e8d8; }
+.chest-presets b { font: 600 22px var(--display); }
+.chest-presets small { font-size: 13px; color: #4d3f2e; }
+.chest-key { padding: 14px 16px; border-radius: 14px; background: #eef5fb; color: #3d5a75; display: flex; flex-direction: column; gap: 8px; }
+.chest-key b { font: 600 17px var(--display); color: #1d4f80; }
+.chest-key ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; line-height: 1.4; }
+.chest-manage { display: flex; justify-content: center; gap: 22px; }
+.over .chest-manage .link, .over .modal-actions .link { color: #7a4f12; }
+.camp-compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.camp-compare div { padding: 16px 18px; border-radius: 16px; display: flex; flex-direction: column; gap: 4px; }
+.camp-compare span { font-size: 14px; }
+.camp-compare b { font: 600 30px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.camp-compare small { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.camp-compare .stay { background: #eef5fb; color: #3d5a75; }
+.camp-compare .stay b { color: #1d4f80; }
+.camp-compare .leave { background: #f1e8d8; color: #6b5a44; }
+.camp-compare .leave b { color: #4d3f2e; }
+.over-lines { margin: 0; display: grid; grid-template-columns: 1fr auto; row-gap: 6px; font-size: 15px; color: #3d5a75; }
+.over-lines dd { margin: 0; font-variant-numeric: tabular-nums; }
+.over-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; background: #eef5fb; }
+.over-card .over-back { padding: 12px 0 0; border-radius: 0; border-top: 1px solid #c9dcee; background: none; }
+
 .ticker { position: absolute; left: 32px; bottom: calc(var(--tray-h) + 14px); z-index: 4; max-width: 46%; padding: 8px 14px; border-radius: 999px; background: rgba(14, 18, 26, 0.78); border: 1px solid var(--line); font-size: 14px; font-weight: 700; animation: slide 0.4s ease-out; }
 .ticker.strike, .ticker.storm { border-color: var(--red); }
 .ticker.open { border-color: var(--gold); }
@@ -400,6 +452,18 @@ p, h1, h2 { margin: 0; }
   .deposit .ghost { grid-column: 2; grid-row: 1 / span 2; padding: 0 14px; }
   .deposit .gold-b { grid-column: 1 / -1; grid-row: auto; }
   .bidbar { left: 0; right: 0; bottom: 0; transform: none; width: auto; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 16px 20px; border-radius: 22px 22px 0 0; border-width: 1px 0 0; }
+  .stage:has(.chest-tab) { --tray-h: 296px; }
+  .chest-tab { position: static; flex-wrap: wrap; justify-content: space-between; padding: 0; background: none; border: 0; border-radius: 0; }
+  .night .chest-tab { background: none; }
+  .chest-wide { display: none; }
+  .chest-narrow { display: flex; }
+  .chest-tab .chest-hint { display: none; }
+  .chest-label { flex-basis: 100%; margin-bottom: -14px; font-size: 13px; }
+  .camp-strip { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 12px; background: rgba(159, 216, 255, 0.12); font-size: 13px; color: #e6ecf5; }
+  .camp-strip b { font: 600 17px var(--display); color: #9fd8ff; white-space: nowrap; }
+  .camp-compare { grid-template-columns: minmax(0, 1fr); }
+  .dialog-title { font-size: 28px; }
+  .modal.over .modal-actions { flex-wrap: wrap; }
   .picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .picker > button { min-width: 0; }
   .custom input { width: 100%; }

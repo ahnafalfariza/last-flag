@@ -20,6 +20,8 @@ that calls `new` with no params gets exactly these.
 | The storm: chance that one bell brings the strike | 5% | `hazard_bps` = 500 |
 | The hill always ends this long after the last bid | 5 minutes | `hard_cap_ms` = 300000 |
 | Reward for ringing the bell that strikes | 0.05 NEAR, at most 10% of the tower | `keeper_reward` |
+| Share of the tower split by the tents still standing at the strike | 20% | `camp_share_bps` = 2000 |
+| Mock yield paid into the tower each second, from a funded reserve | 0.002% of deposits | `yield_ppb_per_sec` = 20000 |
 
 Parameters are fixed when the contract is deployed (`new`). There is no owner, no admin key and
 no method that changes them. Anyone can read them with the `get_params` view.
@@ -57,17 +59,39 @@ see `web/README.md`.
 - **1% goes to the chest of the previous hill's banner** (royalty). On hill 1 there is no banner
   yet, so this 1% goes to the tower.
 
+The tower can also grow from mock yield, paid out of a reserve that anyone can top up with
+`fund_yield`. When the reserve is empty, yield stops. It never touches deposits.
+
+## The campfire (camp share)
+
+At the strike, after the ringer's reward, 20% of the tower goes to the campfire and the banner
+holds the other 80%. Every tent still standing splits the campfire in proportion to its deposit,
+the winner's included. You take your part with your deposit when you `withdraw` from the finished
+hill. The fewer tents stay, the bigger each part.
+
 ## Packing up early (early withdraw)
 
-If you are not on top, you can pack up your tent during the hill and get your 96% back. The fees
-you paid stay in the tower and the chest. The flag holder cannot pack up while leading. You can
-bid again later; that pitches a new tent.
+If you are not on top, you can pack up your tent during the hill and get your 96% back. You give
+up your part of the campfire. The fees you paid stay in the tower and the chest. The flag holder
+cannot pack up while leading. You can bid again later; that pitches a new tent.
+
+## The war chest (purse)
+
+You can prefund bids with `fund_purse`. The first top-up pays the purse's small storage out of
+what you attach. `bid(round_id, max)` then plants your flag from the purse. It charges the current
+minimum like any bid, and refuses if that is above `max`.
+
+Because `bid` takes no deposit, a function-call key limited to that method can sign it, so bids
+need no wallet popup. The web app calls this one-tap and keeps that key in your browser. Such a key
+can only bid, and can spend at most its 0.25 NEAR gas allowance. `withdraw_purse` takes the NEAR
+back out and needs your own full-access key.
 
 ## The banner (trophy NFT)
 
 The winner gets banner N, a NEP-171 NFT minted by the game contract at the strike. It holds:
 
-- **the tower**: everything the hill's fees put in it, minus the bell ringer's reward;
+- **the tower**: everything the hill's fees and yield put in it, minus the bell ringer's reward
+  and the campfire;
 - **the chest**: 1% of every bid in the next hill. The chest fills until the next hill ends.
 
 Whoever holds the banner calls `claim_prize` to collect the tower and whatever the chest has

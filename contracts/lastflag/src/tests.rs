@@ -36,9 +36,14 @@ fn game() -> AccountId {
     "lastflag.testnet".parse().unwrap()
 }
 
+/// Camp share off, so a tower's whole value lands on its banner. The camp tests turn it on.
 fn setup(hazard_bps: u32) -> Contract {
+    setup_camp(hazard_bps, 0)
+}
+
+fn setup_camp(hazard_bps: u32, camp_share_bps: u32) -> Contract {
     call(&game(), zero(), 0, 1);
-    Contract::new(Some(Params { hazard_bps, ..Params::demo() }))
+    Contract::new(Some(Params { hazard_bps, camp_share_bps, ..Params::demo() }))
 }
 
 #[test]
@@ -484,4 +489,238 @@ fn unapproved_account_cannot_take_a_payout_transfer() {
     settle_round_one(&mut c);
     call(&accounts(4), NearToken::from_yoctonear(1), 33_000, 5);
     let _ = c.nft_transfer_payout(accounts(4), "1".to_string(), Some(0), None, U128(1), None);
+}
+
+/* ---------- camp share ---------- */
+
+const BOB_TENT: u128 = 1_008; // 1.05 NEAR less 4%, in millinear
+const CAROL_TENT_MICRO: u128 = 1_058_400; // 1.1025 NEAR less 4%, in micronear
+
+fn carol_tent() -> NearToken {
+    NearToken::from_yoctonear(CAROL_TENT_MICRO * 10u128.pow(18))
+}
+
+/// Alice bids and packs up. Bob and Carol bid and are still camped when the strike lands.
+fn camped_round() -> Contract {
+    let mut c = setup_camp(10_000, 2_000);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    call(&accounts(2), near(2), 1_000, 3);
+    c.deposit(1);
+    call(&accounts(3), near(2), 2_000, 4);
+    c.deposit(1);
+    call(&accounts(1), zero(), 3_000, 5);
+    let _ = c.withdraw(1);
+    call(&accounts(4), zero(), 33_000, 6);
+    assert!(matches!(c.tick(), TickResult::Ended { .. }));
+    c
+}
+
+fn banner_one(c: &Contract) -> Banner {
+    c.get_banner("1".to_string()).unwrap().banner
+}
+
+#[test]
+fn strike_sets_aside_the_camp_pool_against_the_standing_tents() {
+    let c = camped_round();
+    let b = banner_one(&c);
+    let winnings = b.prize.saturating_add(b.camp_pool);
+    assert_eq!(b.camp_pool, bps(winnings, 2_000));
+    assert!(!b.camp_pool.is_zero());
+    // Alice packed up before the strike, so she isn't in the denominator.
+    assert_eq!(b.principal, milli(BOB_TENT).saturating_add(carol_tent()));
+    assert_eq!(b.camp_paid, zero());
+}
+
+#[test]
+fn camp_share_off_leaves_the_whole_tower_on_the_banner() {
+    let mut c = setup(10_000);
+    settle_round_one(&mut c);
+    assert_eq!(banner_one(&c).camp_pool, zero());
+}
+
+#[test]
+fn standing_tents_take_their_part_and_never_more_than_the_pool() {
+    let mut c = camped_round();
+    let b = banner_one(&c);
+    call(&accounts(2), zero(), 34_000, 7);
+    let _ = c.withdraw(1);
+    let bob = banner_one(&c).camp_paid;
+    assert_eq!(bob, pro_rata(b.camp_pool, milli(BOB_TENT), b.principal));
+
+    call(&accounts(3), zero(), 35_000, 8);
+    let _ = c.withdraw(1);
+    let paid = banner_one(&c).camp_paid;
+    assert!(paid <= b.camp_pool);
+    assert!(b.camp_pool.saturating_sub(paid) < milli(1), "only rounding stays behind");
+}
+
+#[test]
+fn packing_up_mid_round_gives_up_the_share() {
+    // Alice left at t=3s in `camped_round`: no tent to claim with, and nothing was paid.
+    let c = camped_round();
+    assert_eq!(c.get_tent(1, accounts(1)), None);
+    assert_eq!(banner_one(&c).camp_paid, zero());
+}
+
+#[test]
+fn failed_payout_restores_principal_only_and_the_share_can_be_taken_again() {
+    let mut c = camped_round();
+    call(&accounts(2), zero(), 34_000, 7);
+    let _ = c.withdraw(1);
+    let share = banner_one(&c).camp_paid;
+    let principal = milli(BOB_TENT);
+    let payout = Payout::Tent { round_id: 1, principal, camp_share: share, mid_round: false };
+    assert!(!c.on_payout(accounts(2), payout, principal.saturating_add(share), Err(PromiseError::Failed)));
+    assert_eq!(c.get_tent(1, accounts(2)), Some(principal));
+    assert_eq!(banner_one(&c).camp_paid, zero());
+
+    let _ = c.withdraw(1);
+    assert_eq!(banner_one(&c).camp_paid, share);
+}
+
+#[test]
+fn a_tent_restored_across_the_strike_goes_to_the_purse_and_takes_no_share() {
+    let mut c = camped_round();
+    let pool = banner_one(&c).camp_pool;
+    // Alice's mid-round payout failed and only comes back after the strike, so `principal`
+    // doesn't count her tent.
+    let tent = milli(960);
+    let payout = Payout::Tent { round_id: 1, principal: tent, camp_share: zero(), mid_round: true };
+    assert!(!c.on_payout(accounts(1), payout, tent, Err(PromiseError::Failed)));
+    assert_eq!(c.get_tent(1, accounts(1)), None);
+    assert_eq!(c.get_purse(accounts(1)), tent);
+
+    // The real campers still get the whole pool.
+    for (who, h) in [(2, 8), (3, 9)] {
+        call(&accounts(who), zero(), 34_000, h);
+        let _ = c.withdraw(1);
+    }
+    let paid = banner_one(&c).camp_paid;
+    assert!(paid <= pool && pool.saturating_sub(paid) < milli(1));
+}
+
+#[test]
+fn a_tent_restored_in_the_same_round_stands_again() {
+    let mut c = setup_camp(10_000, 2_000);
+    call(&accounts(1), near(1), 0, 2);
+    c.deposit(1);
+    call(&accounts(2), near(2), 1_000, 3);
+    c.deposit(1);
+    call(&accounts(1), zero(), 2_000, 4);
+    let _ = c.withdraw(1);
+    let tent = milli(960);
+    let payout = Payout::Tent { round_id: 1, principal: tent, camp_share: zero(), mid_round: true };
+    assert!(!c.on_payout(accounts(1), payout, tent, Err(PromiseError::Failed)));
+    assert_eq!(c.get_tent(1, accounts(1)), Some(tent));
+    assert_eq!(c.get_purse(accounts(1)), zero());
+}
+
+#[test]
+fn pro_rata_handles_the_whole_supply_without_overflow() {
+    let huge = near(1_200_000_000);
+    assert_eq!(pro_rata(huge, huge, huge), huge);
+    assert_eq!(pro_rata(near(10), near(1), near(4)), milli(2_500));
+    assert_eq!(pro_rata(near(10), near(1), zero()), zero());
+}
+
+#[test]
+#[should_panic(expected = "camp share above 50%")]
+fn camp_share_is_bounded() {
+    setup_camp(0, 5_001);
+}
+
+/* ---------- purse ---------- */
+
+fn funded(amount: NearToken) -> (Contract, NearToken) {
+    let mut c = setup(0);
+    call(&accounts(1), amount, 0, 2);
+    let purse = c.fund_purse();
+    (c, purse)
+}
+
+#[test]
+fn first_top_up_pays_the_purse_storage_and_later_ones_add_in_full() {
+    let (mut c, purse) = funded(near(5));
+    assert!(purse < near(5) && purse > milli(4_990));
+    assert_eq!(c.get_purse(accounts(1)), purse);
+    call(&accounts(1), near(1), 1_000, 3);
+    assert_eq!(c.fund_purse(), purse.saturating_add(near(1)));
+}
+
+#[test]
+#[should_panic(expected = "attach more than the purse's storage")]
+fn dust_cannot_open_a_purse() {
+    funded(NearToken::from_yoctonear(1));
+}
+
+#[test]
+fn bid_charges_the_minimum_from_the_purse_and_plants_the_flag() {
+    let (mut c, purse) = funded(near(5));
+    call(&accounts(1), zero(), 1_000, 3);
+    assert_eq!(c.bid(1, near(2)), near(1));
+    assert_eq!(c.get_purse(accounts(1)), purse.saturating_sub(near(1)));
+    let r = c.get_round().round;
+    assert_eq!(r.leader, Some(accounts(1)));
+    assert_eq!(r.principal_total, milli(960));
+    assert_eq!(c.get_tent(1, accounts(1)), Some(milli(960)));
+}
+
+#[test]
+#[should_panic(expected = "purse too low")]
+fn bid_needs_the_minimum_in_the_purse() {
+    let (mut c, _) = funded(milli(500));
+    call(&accounts(1), zero(), 1_000, 3);
+    c.bid(1, near(1));
+}
+
+#[test]
+#[should_panic(expected = "below current minimum")]
+fn bid_respects_its_max() {
+    let (mut c, _) = funded(near(5));
+    call(&accounts(1), zero(), 1_000, 3);
+    c.bid(1, milli(999));
+}
+
+#[test]
+#[should_panic(expected = "round moved on")]
+fn bid_for_a_settled_round_is_refused() {
+    let (mut c, _) = funded(near(5));
+    call(&accounts(1), zero(), 1_000, 3);
+    c.bid(2, near(2));
+}
+
+#[test]
+fn withdraw_purse_takes_part_or_all() {
+    let (mut c, purse) = funded(near(5));
+    call(&accounts(1), NearToken::from_yoctonear(1), 1_000, 3);
+    let _ = c.withdraw_purse(Some(near(1)));
+    assert_eq!(c.get_purse(accounts(1)), purse.saturating_sub(near(1)));
+    let _ = c.withdraw_purse(None);
+    assert_eq!(c.get_purse(accounts(1)), zero());
+}
+
+#[test]
+#[should_panic(expected = "exactly 1 yoctoNEAR")]
+fn withdraw_purse_needs_one_yocto() {
+    let (mut c, _) = funded(near(5));
+    call(&accounts(1), zero(), 1_000, 3);
+    let _ = c.withdraw_purse(None);
+}
+
+#[test]
+#[should_panic(expected = "not that much in your purse")]
+fn withdraw_purse_cannot_overdraw() {
+    let (mut c, _) = funded(near(5));
+    call(&accounts(1), NearToken::from_yoctonear(1), 1_000, 3);
+    let _ = c.withdraw_purse(Some(near(6)));
+}
+
+#[test]
+fn failed_purse_payout_is_put_back() {
+    let (mut c, purse) = funded(near(5));
+    call(&accounts(1), NearToken::from_yoctonear(1), 1_000, 3);
+    let _ = c.withdraw_purse(None);
+    assert!(!c.on_payout(accounts(1), Payout::Purse, purse, Err(PromiseError::Failed)));
+    assert_eq!(c.get_purse(accounts(1)), purse);
 }

@@ -1,4 +1,4 @@
-import { useGame } from '../game/store';
+import { myCampShare, useGame } from '../game/store';
 import { near, short } from '../game/format';
 import type { Banner, Deposit, FeedEvent, Params, Round, ThunderEvent } from '../game/types';
 import { CONTRACT_ID, MARKETPLACE_MSG } from './config';
@@ -18,7 +18,7 @@ type Yocto = string;
 interface ParamsJson {
   min_deposit_start: Yocto; growth_bps: number; min_deposit_cap: Yocto; pot_fee_bps: number;
   royalty_fee_bps: number; grace_ms: number; hazard_bps: number; hard_cap_ms: number; keeper_reward: Yocto;
-  yield_ppb_per_sec?: number;
+  yield_ppb_per_sec?: number; camp_share_bps?: number;
 }
 interface RoundJson {
   id: number; opened_at_ms: number; leader: string | null; prize: Yocto; principal_total: Yocto;
@@ -31,6 +31,7 @@ interface BannerJson {
   banner: {
     prize: Yocto; claimed: boolean; chest: Yocto; chest_taken: Yocto; blocks: number; principal: Yocto;
     duration_ms: number; won_at_ms: number; ended_by_hard_cap: boolean; ticks: number; struck_by: string;
+    camp_pool?: Yocto;
   };
 }
 interface TentJson { account_id: string; amount: Yocto }
@@ -50,6 +51,7 @@ const toParams = (p: ParamsJson): Params => ({
   // Mock yield, paid from a funded reserve. The UI only reads it to word the rules.
   yieldPerSec: (p.yield_ppb_per_sec ?? 0) / 1e9,
   keeperReward: toNear(p.keeper_reward),
+  campShareBps: p.camp_share_bps ?? 0,
 });
 
 const toBanner = (b: BannerJson): Banner => ({
@@ -59,6 +61,7 @@ const toBanner = (b: BannerJson): Banner => ({
   claimed: b.banner.claimed,
   chest: toNear(b.banner.chest),
   chestTaken: toNear(b.banner.chest_taken),
+  campPool: toNear(b.banner.camp_pool ?? '0'),
   blocks: b.banner.blocks,
   principal: toNear(b.banner.principal),
   durationMs: b.banner.duration_ms,
@@ -77,6 +80,7 @@ let lastView: RoundViewJson | null = null;
 let yieldPpb = 0;
 let tents: TentJson[] = [];
 let myTents: MyTentJson[] = [];
+let purseYocto = 0n;
 /** Who planted each block we watched land, per round. Blocks from before the page opened are unknown. */
 const seen = new Map<number, (string | null)[]>();
 let nextId = 1;
@@ -145,7 +149,7 @@ const settledRounds = (current: number): Round[] => {
       return {
         id: t.round_id, state: 'Settled', leader: b?.owner ?? null, prize: b?.prize ?? 0, principalTotal: b?.principal ?? 0,
         deposits: [], minDeposit: 0, lastDepositAt: null, graceUntil: null, hardCapAt: null, openedAt: 0,
-        ticks: b?.ticks ?? 0, tents: [{ account: me, principal: toNear(t.amount) }],
+        ticks: b?.ticks ?? 0, tents: [{ account: me, principal: toNear(t.amount) }], campPool: b?.campPool ?? 0,
       };
     });
 };
@@ -157,17 +161,23 @@ let slowAt = 0;
 
 async function refreshSlow() {
   const me = get().connected ? get().me : null;
-  const [banners, tokens, bal, mine] = await Promise.all([
+  const [banners, tokens, bal, mine, purse] = await Promise.all([
     view<BannerJson[]>(C(), 'get_banners', { limit: 100 }),
     view<TokenJson[]>(C(), 'nft_tokens', { from_index: '0', limit: 100 }),
     me ? balanceOf(me) : Promise.resolve(null),
     me ? view<MyTentJson[]>(C(), 'get_tents_of', { account_id: me, rounds: 20 }) : Promise.resolve([]),
+    // Null keeps the last value: a failed read must not look like an empty purse, which would
+    // send the next bid through the wallet. A build from before the purse just stays at 0.
+    me ? view<Yocto>(C(), 'get_purse', { account_id: me }).catch(() => null) : Promise.resolve('0'),
   ]);
   myTents = mine;
+  if (purse !== null) purseYocto = BigInt(purse);
   const listed = new Map(tokens.map((t) => [Number(t.token_id), Object.keys(t.approved_account_ids ?? {})]));
   set({
     banners: banners.map((b) => ({ ...toBanner(b), listedWith: listed.get(Number(b.token_id)) ?? [] })).sort((a, b) => a.id - b.id),
     ...(bal !== null ? { balance: toNear(bal) } : {}),
+    purse: toNear(purseYocto),
+    oneTap: signer?.oneTap() ?? false,
   });
 }
 
@@ -300,18 +310,65 @@ export function startLive() {
       signIn().then(onSignedIn, (e) => pushFeed('info', panicText(e)));
     },
     disconnect: () => {
+      // On a shared computer the next person must not be able to bid from this purse.
+      const hadKey = signer?.oneTap() ?? false;
+      signer?.forgetOneTap();
       void signer?.signOut();
       signer = null;
-      set({ me: '', connected: false, balance: 0 });
+      purseYocto = 0n;
+      set({ me: '', connected: false, balance: 0, purse: 0, oneTap: false });
+      if (hadKey) pushFeed('info', 'Disconnected. The one-tap key was cleared from this browser.');
+    },
+
+    fundPurse: async (amount) => {
+      if (!(amount > 0)) return 'Enter an amount above 0.';
+      const yocto = BigInt(Math.round(amount * 1e6)) * 10n ** 18n;
+      try {
+        await send('purse', (s) => s.call('fund_purse', {}, yocto));
+        pushFeed('info', `You put ${near(amount)} NEAR in your purse.`);
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
+    withdrawPurse: async () => {
+      try {
+        await send('purse', (s) => s.call('withdraw_purse', {}, 1n));
+        pushFeed('info', 'Your purse went back to your wallet.');
+        return null;
+      } catch (e) {
+        return panicText(e);
+      }
+    },
+    setOneTap: async (on) => {
+      try {
+        await send('one-tap', (s) => (on ? s.enableOneTap() : s.disableOneTap()));
+        set({ oneTap: on });
+        pushFeed('info', on ? 'One-tap is on. Purse bids need no wallet popup.' : 'One-tap is off.');
+        return null;
+      } catch (e) {
+        set({ oneTap: signer?.oneTap() ?? false });
+        return panicText(e);
+      }
     },
 
     deposit: async (_account, _amount) => {
       if (!last) return 'Still loading the hill.';
-      // The contract charges the minimum when the bid lands and refunds the rest, so attach a
+      // The contract charges the minimum when the bid lands and refunds the rest, so allow a
       // little headroom in case someone else's bid lands first.
-      const attach = (BigInt(last.min_deposit) * 110n) / 100n;
+      const minimum = BigInt(last.min_deposit);
+      const headroom = (minimum * 110n) / 100n;
       try {
-        const charged = await send('deposit', (s) => s.call<Yocto>('deposit', { round_id: last!.id }, attach));
+        const roundId = last.id;
+        const held = purseYocto;
+        const fromPurse = held >= minimum;
+        const charged = fromPurse
+          ? await send('deposit', (s) => s.bid(roundId, held < headroom ? held : headroom))
+          : await send('deposit', (s) => s.call<Yocto>('deposit', { round_id: roundId }, headroom));
+        if (fromPurse) {
+          pushFeed('info', `Your flag is up. ${near(toNear(charged ?? minimum))} NEAR came out of your purse.`);
+          return null;
+        }
         pushFeed('info', `Your flag is up. You paid ${near(toNear(charged ?? last!.min_deposit))} NEAR; the rest came back.`);
         return null;
       } catch (e) {
@@ -328,9 +385,11 @@ export function startLive() {
       }
     },
     withdraw: async (roundId) => {
-      const amount = roundId === last?.id
+      const over = get().settled.find((r) => r.id === roundId);
+      const deposit = roundId === last?.id
         ? toNear(tents.find((t) => t.account_id === get().me)?.amount ?? '0')
         : toNear(myTents.find((t) => t.round_id === roundId)?.amount ?? '0');
+      const amount = deposit + (over ? myCampShare(over, get().me) : 0);
       try {
         const ok = await send('withdraw', (s) => s.call<boolean>('withdraw', { round_id: roundId }));
         if (ok === false) throw new Error('The transfer failed, your tent is still standing.');

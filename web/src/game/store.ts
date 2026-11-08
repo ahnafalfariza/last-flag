@@ -18,6 +18,7 @@ export const PARAMS: Params = {
   hardCapMs: 5 * 60_000,
   yieldPerSec: 0.000004,
   keeperReward: 0.05,
+  campShareBps: 2_000,
 };
 
 export const ME = 'ahnaf.testnet';
@@ -53,6 +54,10 @@ interface Store {
   me: string;
   balance: number;
   connected: boolean;
+  /** NEAR prefunded in the contract. Bids come out of it first. */
+  purse: number;
+  /** A local key can sign purse bids, so they need no wallet popup. */
+  oneTap: boolean;
 
   round: Round;
   settled: Round[];
@@ -84,6 +89,12 @@ interface Store {
   listBanner: (bannerId: number, market: string, price: number) => Result<string | null>;
   /** Revoke every marketplace approval, so the tower and chest can be claimed again. */
   unlistBanner: (bannerId: number) => Result<string | null>;
+  /** Move `amount` NEAR from the wallet into the purse. Resolves to an error or null. */
+  fundPurse: (amount: number) => Result<string | null>;
+  /** Move the whole purse back to the wallet. Resolves to an error or null. */
+  withdrawPurse: () => Result<string | null>;
+  /** Turn one-tap bidding on or off. Resolves to an error or null. */
+  setOneTap: (on: boolean) => Result<string | null>;
   advance: (dtMs: number) => void;
 }
 
@@ -164,6 +175,8 @@ export const useGame = create<Store>((set, get) => ({
   me: ME,
   balance: 25,
   connected: false,
+  purse: 0,
+  oneTap: false,
 
   round: seeded.round,
   settled: [],
@@ -194,7 +207,8 @@ export const useGame = create<Store>((set, get) => ({
     const { round, params, now, banners } = s;
     if (round.state === 'Settled') return 'This round just ended. Wait a moment for the next one.';
     if (amount < round.minDeposit - 1e-9) return `Bids must be at least ${round.minDeposit.toFixed(2)} NEAR right now.`;
-    if (account === s.me && amount > s.balance) return 'Not enough NEAR in your wallet.';
+    const fromPurse = account === s.me && s.purse >= amount;
+    if (account === s.me && !fromPurse && amount > s.balance) return 'Not enough NEAR in your wallet.';
 
     const principal = amount * (1 - (params.potFeeBps + params.royaltyFeeBps) / 10_000);
     const toPot = amount * params.potFeeBps / 10_000;
@@ -224,7 +238,8 @@ export const useGame = create<Store>((set, get) => ({
     set({
       round: next,
       banners: newBanners,
-      balance: account === s.me ? s.balance - amount : s.balance,
+      balance: account === s.me && !fromPurse ? s.balance - amount : s.balance,
+      purse: fromPurse ? s.purse - amount : s.purse,
       feed: [{ id: id(), at: now, kind: 'flag' as const, text }, ...s.feed].slice(0, 40),
     });
     return null;
@@ -249,33 +264,35 @@ export const useGame = create<Store>((set, get) => ({
     }
     // Settle: mint banner to the leader, credit the prize, open the next round.
     const winner = round.leader ?? by;
+    const { reward, campfire: campPool, winnerTake: prize } = towerSplit(round.prize, params);
     const banner: Banner = {
       id: round.id,
       owner: winner,
-      prize: round.prize,
+      prize,
       claimed: false,
       chest: 0,
       chestTaken: 0,
+      campPool,
       blocks: round.deposits.length,
       principal: round.principalTotal,
       durationMs: now - round.openedAt,
       wonAt: now,
       endedBy: hardCap ? 'hard cap' : 'strike',
     };
-    const settledRound: Round = { ...round, state: 'Settled', ticks };
+    const settledRound: Round = { ...round, state: 'Settled', ticks, campPool };
     const who = winner === s.me ? 'You' : winner.replace('.testnet', '');
         set({
       round: openRound(round.id + 1, now, params),
       settled: [settledRound, ...s.settled].slice(0, 5),
       banners: [...s.banners, banner],
       thunder: [ev, ...s.thunder].slice(0, 30),
-      strike: { round: round.id, winner, prize: round.prize, blocks: round.deposits.length, by, at: now },
+      strike: { round: round.id, winner, prize, blocks: round.deposits.length, by, at: now },
       flash: 1,
-      balance: by === s.me ? s.balance + params.keeperReward : s.balance,
+      balance: by === s.me ? s.balance + reward : s.balance,
       whaleThreshold: 0.6,
       feed: [
         { id: id(), at: now, kind: 'open' as const, text: `Round ${round.id + 1} is open. Bid to take the lead.` },
-        { id: id(), at: now, kind: 'strike' as const, text: `Round ${round.id} is over. ${who} won ${round.prize.toFixed(2)} NEAR.` },
+        { id: id(), at: now, kind: 'strike' as const, text: `Round ${round.id} is over. ${who} won ${prize.toFixed(2)} NEAR.` },
         ...s.feed,
       ].slice(0, 40),
     });
@@ -297,14 +314,17 @@ export const useGame = create<Store>((set, get) => ({
     const round = take(s.round);
     const settled = s.settled.map(take);
     if (got === 0) return 0;
+    const over = s.settled.find((r) => r.id === roundId);
+    const share = over?.campPool && over.principalTotal > 0 ? over.campPool * got / over.principalTotal : 0;
+    const total = got + share;
     const who = account === s.me ? 'You' : account.replace('.testnet', '');
     set({
       round,
       settled,
-      balance: account === s.me ? s.balance + got : s.balance,
-      feed: [{ id: id(), at: s.now, kind: 'tent' as const, text: `${who} withdrew ${got.toFixed(2)} NEAR from round ${roundId}.` }, ...s.feed].slice(0, 40),
+      balance: account === s.me ? s.balance + total : s.balance,
+      feed: [{ id: id(), at: s.now, kind: 'tent' as const, text: `${who} withdrew ${total.toFixed(2)} NEAR from round ${roundId}.` }, ...s.feed].slice(0, 40),
     });
-    return got;
+    return total;
   },
 
   claimTower: (bannerId) => {
@@ -358,6 +378,26 @@ export const useGame = create<Store>((set, get) => ({
   unlistBanner: (bannerId) => {
     const s = get();
     set({ banners: s.banners.map((x) => (x.id === bannerId ? { ...x, listedWith: [] } : x)) });
+    return null;
+  },
+
+  fundPurse: (amount) => {
+    const s = get();
+    if (!(amount > 0)) return 'Enter an amount above 0.';
+    if (amount > s.balance) return 'Not enough NEAR in your wallet.';
+    set({ balance: s.balance - amount, purse: s.purse + amount });
+    return null;
+  },
+
+  withdrawPurse: () => {
+    const s = get();
+    if (s.purse <= 0) return 'Your purse is empty.';
+    set({ balance: s.balance + s.purse, purse: 0 });
+    return null;
+  },
+
+  setOneTap: (oneTap) => {
+    set({ oneTap });
     return null;
   },
 
@@ -442,6 +482,18 @@ export const myStake = (round: Round, me: string) =>
   round.tents
     ? round.tents.filter((t) => t.account === me).reduce((a, t) => a + t.principal, 0)
     : round.deposits.filter((d) => d.account === me && !d.withdrawn).reduce((a, d) => a + d.principal, 0);
+
+/** How a tower splits at the strike, in the contract's order: the ringer, then the campfire, then the winner. */
+export const towerSplit = (prize: number, params: Params) => {
+  const reward = Math.min(params.keeperReward, prize * 0.1);
+  const winnings = prize - reward;
+  const campfire = winnings * params.campShareBps / 10_000;
+  return { reward, campfire, winnerTake: winnings - campfire };
+};
+
+/** Your part of a settled round's camp pool. */
+export const myCampShare = (round: Round, me: string) =>
+  round.campPool && round.principalTotal > 0 ? round.campPool * myStake(round, me) / round.principalTotal : 0;
 
 export const campers = (round: Round) => {
   if (round.tents) return round.tents.map((t) => ({ ...t }));

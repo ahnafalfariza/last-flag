@@ -36,7 +36,7 @@ try {
     ? {
         min_deposit_start: '1000000000000000000000000', growth_bps: 500, min_deposit_cap: '5000000000000000000000000',
         pot_fee_bps: 300, royalty_fee_bps: 100, grace_ms: 10_000, hazard_bps: 1000, hard_cap_ms: 120_000,
-        keeper_reward: '50000000000000000000000', yield_ppb_per_sec: 50_000,
+        keeper_reward: '50000000000000000000000', yield_ppb_per_sec: 50_000, camp_share_bps: 2_000,
       }
     : undefined;
   await deployGame(game.account, WASM, params);

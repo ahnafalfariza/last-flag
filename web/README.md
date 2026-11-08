@@ -38,6 +38,11 @@ What differs from the simulator, because the contract works that way:
 - A bid always costs the current minimum. The tray shows one amount; 10% headroom is attached in
   case another bid lands first, and the contract refunds what it didn't charge.
 - Claiming a banner pays the tower and the chest together.
+- Bids come out of the war chest (`fund_purse`, `bid`) when it holds the minimum. Turning one-tap on
+  adds a function-call key limited to `bid` and keeps it in local storage, so those bids need no
+  wallet popup.
+- Tag shares and the campfire are worked out from the current tower. The contract fixes the real
+  split at the strike.
 - In the Hall, the holder can hand the banner over (`nft_transfer`), sell it (approve a marketplace that
   settles through NEP-199 `nft_transfer_payout`; the message is only sent if that account has a
   contract), or cancel the listing (`nft_revoke_all`). Claims wait while it is listed, as the contract
