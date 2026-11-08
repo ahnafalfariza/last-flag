@@ -73,5 +73,4 @@ current round, and a banner claim with an unclaimed tower and a chest.
 
 ## Not done
 
-- `lastflag.testnet` runs the build from before the camp share and the purse. The storage layout changed, so this build needs a new account (`pnpm deploy-game` in `keeper/`).
 - Dependencies are pinned to near-sdk 5.29.1 by `Cargo.lock`, because 5.30 requires rustc 1.95.
