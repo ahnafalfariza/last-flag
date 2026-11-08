@@ -3,9 +3,10 @@
 A no-loss last-bidder game on NEAR, played as King of the Hill. Every bid plants your flag on
 top of the tower and puts the sun back to noon. When the sun sets a storm rolls in, and every
 block the bell rings with a small chance of lightning. When it strikes, the flag on top wins a
-banner NFT that holds the tower: the prize, made only of fees. Everyone else takes 96% of every
-bid back. The banner then earns 1% of every bid in the next hill. There is a hard cap, no owner
-and no admin key, and whoever rings the striking bell gets a small reward.
+banner NFT that holds most of the tower: the prize, made of fees and, on the demo params, a
+funded mock yield. The tents still standing split the rest. Everyone takes 96% of every bid back.
+The banner then earns 1% of every bid in the next hill. There is a hard cap, no owner and no admin
+key, and whoever rings the striking bell gets a small reward.
 
 Full rules with the demo numbers: [RULES.md](RULES.md).
 
@@ -91,18 +92,25 @@ transactions. Bids, bells and strikes from the bots and keeper show up as they l
   ends on the next bell regardless.
 - **Your tent** (principal) holds 96% of each bid. **Pack up** (withdraw) any time you are not on
   top, or after the hill.
-- **The tower** (prize) gets 3% of each bid. **The banner** (trophy NFT, NEP-171) holds it.
+- **The tower** (prize) gets 3% of each bid. **The banner** (trophy NFT, NEP-171) holds it, less
+  the campfire.
+- **The campfire** (camp share) is 20% of the tower at the strike, split pro rata among the tents
+  still standing. Packing up early gives up your part. It stays no-loss either way.
 - **The chest** (royalty) under the previous banner gets 1% of each bid.
 - **The ringer** whose bell strikes gets 0.05 NEAR from the tower (keeper reward), at most 10%
   of it.
+- **The war chest** (`purse`) is NEAR you prefund in the contract. `bid` spends it and takes no
+  deposit, so a function-call key limited to that one method can sign it: **one-tap** bids with no
+  wallet popup.
 
 ## Why it isn't a Ponzi
 
 Principal is never spent. 96% of every bid sits in the bidder's own tent in the contract ledger
-and goes back to that bidder only. Later players never pay earlier ones. The prize is the 3% fee
-from bids in that hill (less storage), and the chest is 1% of bids in the next one. Nobody is
-promised a return: a player who doesn't win pays 4% per bid for the chance to win, and gets the
-rest back.
+and goes back to that bidder only. Later players never pay earlier ones. The tower is the 3% fee
+from bids in that hill (less storage) plus whatever mock yield its funded reserve pays, and the
+chest is 1% of bids in the next one. The camp share comes out of that same tower, never out of
+anyone's principal. Nobody is promised a return: a player who doesn't win pays 4% per bid for the
+chance to win, and gets the rest back.
 
 ## Threat model
 
@@ -124,6 +132,13 @@ rest back.
 - **Double payout.** Ledger entries are zeroed before the transfer; a callback restores them if
   the transfer fails. A sandbox test covers it with an account that deletes itself before the
   payout lands (see the keeper README).
+- **Double camp share.** A failed tent payout restores the principal only, and the share is worked
+  out again on the next withdraw. Shares are capped by what is left of the pool, so they can never
+  add up to more than it.
+- **A stolen one-tap key.** It lives in the browser's local storage. On chain it can only call
+  `bid`, attach no deposit, and spend its 0.25 NEAR gas allowance. It can turn the war chest into
+  bids, which costs the 4% fee per bid, but the 96% still lands in the owner's tent and
+  `withdraw_purse` needs a full-access key (1 yocto attached).
 - **Draining a banner mid-sale.** `claim_prize` is refused while the token has approvals.
 - **Storage eating principal.** Storage is paid from the 3% fee; `new` refuses params whose first
   bid can't cover it.
@@ -165,11 +180,14 @@ cd keeper && pnpm wasm && pnpm e2e
 
 Starts its own sandbox and checks on a real node: `new` refuses other callers, refunds of the
 excess, early pack-up, a strike from real block randomness, the keeper reward cap, withdraw and
-claim transfers, the hard cap, and the refund of a late bid.
+claim transfers, the hard cap, the refund of a late bid, the camp share, and a one-tap key that can
+bid and do nothing else.
 
 ## Deploy to testnet
 
-Not deployed yet. These are the steps:
+`lastflag.testnet` is live, with a hosted keeper and bots. It runs the build from before the camp
+share and the war chest. Their storage layout differs, so this code can't be deployed over that
+account: it would no longer read its own state. Deploy it to a new account. These are the steps:
 
 ```bash
 cd keeper
