@@ -55,6 +55,11 @@ account itself (`new` is private). Pass `LASTFLAG_PARAMS='{...}'` to override th
 `bots setup` creates six sub-accounts of the funder with `BOT_FUND` NEAR each (default 15) and
 saves their keys to `.bots.testnet.json`.
 
+Set `BOT_ROUND_MINUTES=55` on the bots for long hills. They bid about once every half a sun, make
+a rescue bid when a tenth of the sun is left, and stop once the hill is that old so the storm can
+end it. It needs a contract with a `grace_ms` of minutes, not seconds, like the live deploy in the
+root README.
+
 Then point the web app at it: `VITE_CONTRACT_ID=lastflag.you.testnet` in `web/.env.local`.
 
 ## Hosting the keeper

@@ -8,7 +8,7 @@ funded mock yield. The tents still standing split the rest. Everyone takes 96% o
 The banner then earns 1% of every bid in the next hill. There is a hard cap, no owner and no admin
 key, and whoever rings the striking bell gets a small reward.
 
-Full rules with the demo numbers: [RULES.md](RULES.md).
+Full rules with the live and demo numbers: [RULES.md](RULES.md).
 
 ## Try it in 1 minute
 
@@ -84,11 +84,12 @@ transactions. Bids, bells and strikes from the bots and keeper show up as they l
 
 - **The hill** (round) opens empty. The first bid costs 1 NEAR.
 - **A bid** (deposit) plants your flag on top: you are the **flag on top** (leader). The next
-  minimum grows 5%, capped at 5 NEAR.
-- **The sun** (grace) is reset to noon by every bid. While it is up, nobody can win.
+  minimum grows 2%, capped at 2 NEAR.
+- **The sun** (grace) lasts 5 minutes and is reset to noon by every bid. While it is up, nobody
+  can win.
 - **The storm** (armed) starts at sunset. Anyone may **ring the bell** (`tick()`) once per
   block. Each bell rolls block randomness, with a 5% chance of a strike.
-- **The strike** (round end): the flag on top wins. Five minutes after the last bid the hill
+- **The strike** (round end): the flag on top wins. Thirty minutes after the last bid the hill
   ends on the next bell regardless.
 - **Your tent** (principal) holds 96% of each bid. **Pack up** (withdraw) any time you are not on
   top, or after the hill.
@@ -124,8 +125,8 @@ chance to win, and gets the rest back.
 - **Bell spam.** One roll per block, and who rings doesn't change the roll. Calling `tick()` more
   often wastes gas.
 - **Nobody rings.** Anyone can. At the hard cap bids are refused and the next bell ends the hill.
-- **Dust spam to keep the sun up.** The minimum grows 5% per bid and every bid pays 4% in fees.
-- **Minimum pushed out of reach.** It is capped at 5 NEAR.
+- **Dust spam to keep the sun up.** The minimum grows 2% per bid and every bid pays 4% in fees.
+- **Minimum pushed out of reach.** It is capped at 2 NEAR.
 - **Leader walks away with the flag.** The leader can't pack up while leading.
 - **Late bid after the strike.** `deposit(round_id)` panics if the round moved on, refunding the
   whole bid.
@@ -186,9 +187,10 @@ bid and do nothing else.
 
 ## Deploy to testnet
 
-`lastflag.testnet` is live, with a hosted keeper and bots. It runs the build from before the camp
-share and the war chest. Their storage layout differs, so this code can't be deployed over that
-account: it would no longer read its own state. Deploy it to a new account. These are the steps:
+`lastflag-v2.testnet` is live, with a hosted keeper and bots, and hills last about an hour. The
+older `lastflag.testnet` runs the build from before the camp share and the war chest. Their
+storage layouts differ, so this code can't be deployed over that account: it would no longer read
+its own state. Always deploy to a new account. These are the steps:
 
 ```bash
 cd keeper
@@ -202,6 +204,13 @@ LASTFLAG_CONTRACT=lastflag.you.testnet pnpm bots
 Keys come from `<ROLE>_KEY` or from `~/.near-credentials/testnet/<account>.json`. `deploy-game`
 must be signed by the contract account itself. `bots setup` creates six funded sub-accounts and
 saves their keys to `keeper/.bots.testnet.json` (git-ignored).
+
+With no params, `deploy-game` uses the demo numbers. For hour-long hills, the live deploy set
+`LASTFLAG_PARAMS` as below and runs the bots with `BOT_ROUND_MINUTES=55`:
+
+```json
+{"min_deposit_start":"1000000000000000000000000","growth_bps":200,"min_deposit_cap":"2000000000000000000000000","pot_fee_bps":300,"royalty_fee_bps":100,"grace_ms":300000,"hazard_bps":500,"hard_cap_ms":1800000,"keeper_reward":"50000000000000000000000","yield_ppb_per_sec":20000,"camp_share_bps":2000}
+```
 
 Then delete the contract account's full-access keys, so nobody can redeploy it.
 

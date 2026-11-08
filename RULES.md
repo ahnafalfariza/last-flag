@@ -5,26 +5,31 @@ contract word is in brackets.
 
 ## The numbers
 
-These are the demo parameters, `Params::demo()` in `contracts/lastflag/src/lib.rs`. A deploy
-that calls `new` with no params gets exactly these.
+The live game on `lastflag-v2.testnet` was deployed with the numbers in the Live column. The
+Demo column is `Params::demo()` in `contracts/lastflag/src/lib.rs`, which a deploy gets when it
+calls `new` with no params, and which the local sandbox uses.
 
-| | Demo value | Contract field |
-| --- | --- | --- |
-| First bid of a hill | 1 NEAR | `min_deposit_start` |
-| Each bid raises the next minimum by | 5% | `growth_bps` = 500 |
-| The minimum stops growing at | 5 NEAR | `min_deposit_cap` |
-| Share of each bid that goes to the tower | 3% | `pot_fee_bps` = 300 |
-| Share of each bid that goes to the last banner's chest | 1% | `royalty_fee_bps` = 100 |
-| Share of each bid that is your deposit, returned in full | 96% | the rest |
-| The sun: after a bid, nobody can win for | 30 seconds | `grace_ms` = 30000 |
-| The storm: chance that one bell brings the strike | 5% | `hazard_bps` = 500 |
-| The hill always ends this long after the last bid | 5 minutes | `hard_cap_ms` = 300000 |
-| Reward for ringing the bell that strikes | 0.05 NEAR, at most 10% of the tower | `keeper_reward` |
-| Share of the tower split by the tents still standing at the strike | 20% | `camp_share_bps` = 2000 |
-| Mock yield paid into the tower each second, from a funded reserve | 0.002% of deposits | `yield_ppb_per_sec` = 20000 |
+| | Live | Demo | Contract field |
+| --- | --- | --- | --- |
+| First bid of a hill | 1 NEAR | 1 NEAR | `min_deposit_start` |
+| Each bid raises the next minimum by | 2% | 5% | `growth_bps` |
+| The minimum stops growing at | 2 NEAR | 5 NEAR | `min_deposit_cap` |
+| Share of each bid that goes to the tower | 3% | 3% | `pot_fee_bps` = 300 |
+| Share of each bid that goes to the last banner's chest | 1% | 1% | `royalty_fee_bps` = 100 |
+| Share of each bid that is your deposit, returned in full | 96% | 96% | the rest |
+| The sun: after a bid, nobody can win for | 5 minutes | 30 seconds | `grace_ms` |
+| The storm: chance that one bell brings the strike | 5% | 5% | `hazard_bps` = 500 |
+| The hill always ends this long after the last bid | 30 minutes | 5 minutes | `hard_cap_ms` |
+| Reward for ringing the bell that strikes | 0.05 NEAR, at most 10% of the tower | same | `keeper_reward` |
+| Share of the tower split by the tents still standing at the strike | 20% | 20% | `camp_share_bps` = 2000 |
+| Mock yield paid into the tower each second, from a funded reserve | 0.002% of deposits | same | `yield_ppb_per_sec` = 20000 |
 
 Parameters are fixed when the contract is deployed (`new`). There is no owner, no admin key and
-no method that changes them. Anyone can read them with the `get_params` view.
+no method that changes them. Anyone can read them with the `get_params` view. The live game's
+mock-yield reserve is not funded, so it pays no yield until someone calls `fund_yield`.
+
+On testnet the demo bots keep each hill going for about 55 minutes and then stop bidding, so a
+hill with no other players lasts about an hour. A real bid after that extends it.
 
 The local sandbox has a faster variant (`FAST=1 pnpm sandbox`): a 10 second sun, 10% per bell
 and a 2 minute hard cap. Everything else is the same. The browser simulator uses its own numbers;
@@ -34,17 +39,17 @@ see `web/README.md`.
 
 1. **The hill opens.** The tower is empty and nobody's flag is up. The first bid costs 1 NEAR.
 2. **Bid to take the lead** (deposit). A bid always costs the current minimum. Your flag goes
-   on top of the tower and you lead. The minimum grows 5% for the next bid, until it reaches
-   5 NEAR (from the 34th bid of a hill on, every bid costs 5 NEAR). You may attach more than
+   on top of the tower and you lead. The minimum grows 2% for the next bid, until it reaches
+   2 NEAR (from the 37th bid of a hill on, every bid costs 2 NEAR). You may attach more than
    the minimum; the contract charges the minimum and sends the rest back, so a bid that lands
    just after someone else's still goes through.
-3. **The sun** (grace). Every bid puts the sun back to noon: for 30 seconds nobody can win.
+3. **The sun** (grace). Every bid puts the sun back to noon: for 5 minutes nobody can win.
    Anyone can outbid the leader, and that resets the sun again.
 4. **The storm** (armed). When the sun sets, anyone may ring the bell (`tick()`), once per
    block. Each bell rolls block randomness: 5% chance of a strike, 95% chance of a miss. On
    average that is 20 bells, but there is no countdown to watch: the next bell can always be
    the one. A bid during the storm brings the sun back up.
-5. **The strike** (round end). When a bell strikes, whoever has the flag on top wins. If 5
+5. **The strike** (round end). When a bell strikes, whoever has the flag on top wins. If 30
    minutes pass after the last bid, the hill ends on the next bell no matter what, and no more
    bids are accepted.
 6. **The next hill** opens at once, starting again at 1 NEAR.
