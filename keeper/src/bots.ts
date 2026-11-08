@@ -6,7 +6,7 @@ import { CONTRACT, env, NETWORK, nearStr, provider, reason, role, sleep, view, y
  * Demo players for a live round, the same cast as the simulator: whale bids big when the tower
  * passes a threshold, sniper waits for the storm, the crowd arrives at random. They go quiet after
  * ~45 blocks so the round converges. When a new round opens they withdraw their principal from
- * every finished one, so they can keep playing.
+ * every finished one and claim what their banners hold, so they can keep playing.
  *
  *   pnpm bots setup   create whale/sniper/dibs/moss/pip/rook as sub-accounts of FUNDER_ACCOUNT,
  *                     BOT_FUND NEAR each (default 15), keys saved to .bots.<network>.json
@@ -19,6 +19,7 @@ const NAMES = ['whale', 'sniper', 'dibs', 'moss', 'pip', 'rook'];
 const FILE = new URL(`../.bots.${NETWORK}.json`, import.meta.url);
 
 interface BotKey { account: string; key: string }
+interface BannerView { token_id: string; owner_id: string; banner: { prize: string; claimed: boolean; chest: string; chest_taken: string } }
 
 const loadBots = (): BotKey[] => {
   if (env.BOTS) return JSON.parse(env.BOTS) as BotKey[];
@@ -83,6 +84,30 @@ async function play() {
     }
   };
 
+  // A banner pays its tower once, then its chest fills from the next round's bids, so recent
+  // banners are checked on every sweep. A failed claim stays due and is retried on the next one.
+  const claimBanners = async () => {
+    let banners: BannerView[];
+    try {
+      banners = await view<BannerView[]>('get_banners', { limit: 20 });
+    } catch (e) {
+      console.warn(`banner lookup failed: ${reason(e)}`);
+      return;
+    }
+    for (const { token_id, owner_id, banner } of banners) {
+      const bot = bots.find((b) => b.acc.accountId === owner_id);
+      if (!bot) continue;
+      const due = (banner.claimed ? 0n : BigInt(banner.prize)) + BigInt(banner.chest) - BigInt(banner.chest_taken);
+      if (due === 0n) continue;
+      try {
+        await bot.acc.callFunction({ contractId: CONTRACT(), methodName: 'claim_prize', args: { token_id }, gas: 100n * 10n ** 12n });
+        console.log(`round ${token_id}: ${bot.name} claimed ${nearStr(due)}`);
+      } catch (e) {
+        console.warn(`${bot.name} claim failed: ${reason(e)}`);
+      }
+    }
+  };
+
   for (;;) {
     await sleep(STEP_MS);
     let v: RoundView;
@@ -93,6 +118,7 @@ async function play() {
       whaleAt = 0.05;
       console.log(`round ${r.id}: ${v.status}`);
       await packUp(r.id);
+      await claimBanners();
       continue; // the sweep takes a while, so read the round again before bidding
     }
     if (Date.now() - lastBeat >= HEARTBEAT_MS) {
