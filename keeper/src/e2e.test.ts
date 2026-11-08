@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Account, actions, JsonRpcProvider } from 'near-api-js';
+import { Account, actions, JsonRpcProvider, KeyPair, type KeyPairString } from 'near-api-js';
 import { DEFAULT_ACCOUNT_ID, DEFAULT_PRIVATE_KEY, Sandbox } from 'near-sandbox';
 import { createSub, deployGame, fundYield, WASM } from './deploy.ts';
 import { sleep, yocto } from './lib.ts';
@@ -288,4 +288,79 @@ test('a banner paid to a vanished owner is put back', async () => {
 
   const after = (await view<BannerJson>(id, 'get_banner', { token_id: '1' })).banner;
   assert.deepEqual(after, before, 'tower unclaimed and chest untouched again');
+});
+
+/** Bids big enough that a camp share is well above the gas slack in the balance checks. */
+const CAMP = { min_deposit_start: (5n * NEAR).toString(), min_deposit_cap: (20n * NEAR).toString(), camp_share_bps: 2_000 };
+type CampJson = { banner: { principal: string; camp_pool: string; camp_paid: string } };
+
+test('tents standing at the strike share the camp pool, an early leaver does not', async () => {
+  const id = await game(CAMP);
+  const leaver = (await createSub(root, 'leaver', 20)).account;
+  const camper = (await createSub(root, 'camper', 20)).account;
+  const top = (await createSub(root, 'top', 20)).account;
+  const bell = (await createSub(root, 'bell2', 5)).account;
+
+  await call(leaver, id, 'deposit', { round_id: 1 }, yocto(6));
+  await call(camper, id, 'deposit', { round_id: 1 }, yocto(6));
+  await call(top, id, 'deposit', { round_id: 1 }, yocto(6));
+
+  let before = await balance(leaver);
+  await call(leaver, id, 'withdraw', { round_id: 1 });
+  close(await balance(leaver), before + yocto(4.8), 'the early leaver gets 96% and no share');
+
+  await sleep(2_500);
+  await call(bell, id, 'tick', {});
+  const { banner } = await view<CampJson>(id, 'get_banner', { token_id: '1' });
+  const tent = BigInt(await view<string>(id, 'get_tent', { round_id: 1, account_id: camper.accountId }));
+  const share = (BigInt(banner.camp_pool) * tent) / BigInt(banner.principal);
+  assert.ok(share > GAS_SLACK * 2n, `share ${near(share)} is big enough to see`);
+
+  before = await balance(camper);
+  await call(camper, id, 'withdraw', { round_id: 1 });
+  close(await balance(camper), before + tent + share, 'the camper gets the tent and the share');
+});
+
+test('a camp share paid to a vanished account is put back', async () => {
+  const id = await game(CAMP);
+  const v = await vanisher('camper2');
+  const top = (await createSub(root, 'top2', 20)).account;
+  const bell = (await createSub(root, 'bell3', 5)).account;
+
+  await via(v, id, 'deposit', { round_id: 1 }, yocto(5));
+  await call(top, id, 'deposit', { round_id: 1 }, yocto(6));
+  await sleep(2_500);
+  await call(bell, id, 'tick', {});
+  const tent = await view<string>(id, 'get_tent', { round_id: 1, account_id: v });
+
+  const { paidOut, failed } = await vanish(v, id, 'withdraw', { round_id: 1 });
+  assert.ok(failed, 'the transfer to the vanished account failed');
+  assert.equal(paidOut, false, 'on_payout saw the failure');
+  assert.equal(await view<string>(id, 'get_tent', { round_id: 1, account_id: v }), tent, 'principal only');
+  assert.equal((await view<CampJson>(id, 'get_banner', { token_id: '1' })).banner.camp_paid, '0');
+});
+
+test('a function-call key can bid from the purse and do nothing else', async () => {
+  const id = await game();
+  const player = (await createSub(root, 'player', 20)).account;
+  await call(player, id, 'fund_purse', {}, yocto(5));
+
+  const kp = KeyPair.fromRandom('ed25519');
+  await player.addFunctionCallAccessKey({ publicKey: kp.getPublicKey().toString(), contractId: id, methodNames: ['bid'], allowance: yocto(0.25) });
+  const session = new Account(player.accountId, provider, kp.toString() as KeyPairString);
+
+  const charged = await call<string>(session, id, 'bid', { round_id: 1, max: (2n * NEAR).toString() });
+  assert.equal(charged, NEAR.toString());
+  assert.equal((await view<RoundView>(id, 'get_round')).round.leader, player.accountId);
+
+  await assert.rejects(call(session, id, 'withdraw', { round_id: 1 }));
+  await assert.rejects(call(session, id, 'withdraw_purse', {}, 1n));
+  await assert.rejects(call(session, id, 'deposit', { round_id: 1 }, yocto(2)));
+
+  // The account's own key takes the rest out.
+  const purse = BigInt(await view<string>(id, 'get_purse', { account_id: player.accountId }));
+  const before = await balance(player);
+  await call(player, id, 'withdraw_purse', {}, 1n);
+  close(await balance(player), before + purse, 'the purse came home');
+  assert.equal(await view<string>(id, 'get_purse', { account_id: player.accountId }), '0');
 });

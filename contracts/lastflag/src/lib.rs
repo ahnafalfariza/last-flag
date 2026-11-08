@@ -10,8 +10,8 @@ use near_contract_standards::non_fungible_token::{NonFungibleToken, TokenId};
 use near_sdk::collections::LookupMap;
 use near_sdk::serde_json::json;
 use near_sdk::{
-    env, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise,
-    PromiseError,
+    assert_one_yocto, env, near, require, AccountId, BorshStorageKey, Gas, NearToken,
+    PanicOnDefault, Promise, PromiseError,
 };
 
 mod nft;
@@ -34,6 +34,8 @@ const MAX_HARD_CAP_MS: u64 = 7 * 24 * 60 * 60_000;
 const MAX_PAGE: u32 = 100;
 /// Highest mock yield `new` accepts: 0.1% of principal per second.
 const MAX_YIELD_PPB_PER_SEC: u32 = 1_000_000;
+/// Highest camp share `new` accepts, so the flag on top always keeps most of the tower.
+const MAX_CAMP_SHARE_BPS: u32 = 5_000;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -45,6 +47,7 @@ enum StorageKey {
     NftEnumeration,
     NftApprovals,
     TentIndex,
+    Purses,
 }
 
 #[near(serializers = [borsh, json])]
@@ -72,6 +75,10 @@ pub struct Params {
     /// paid out of the yield reserve (see `fund_yield`). 0 turns it off.
     #[serde(default)]
     pub yield_ppb_per_sec: u32,
+    /// Share of the tower, after the ringer's reward, split pro rata among the tents still
+    /// standing at the strike. 0 turns it off.
+    #[serde(default)]
+    pub camp_share_bps: u32,
 }
 
 impl Params {
@@ -90,6 +97,7 @@ impl Params {
             keeper_reward: NearToken::from_millinear(50),
             // 0.002% of principal a second: 20 NEAR camped earns about 0.12 NEAR in 5 minutes.
             yield_ppb_per_sec: 20_000,
+            camp_share_bps: 2_000,
         }
     }
 
@@ -103,6 +111,7 @@ impl Params {
         require!(self.hard_cap_ms <= MAX_HARD_CAP_MS, "hard cap above 7 days");
         require!(self.min_deposit_cap >= self.min_deposit_start, "cap below start");
         require!(self.yield_ppb_per_sec <= MAX_YIELD_PPB_PER_SEC, "yield above 0.1% a second");
+        require!(self.camp_share_bps <= MAX_CAMP_SHARE_BPS, "camp share above 50%");
         // The first block of a round pays its own tent and sets aside the banner's storage,
         // so settling never spends principal. This also rules out a zero minimum.
         let first_block_storage = storage_bytes_cost(TENT_STORAGE_BYTES + BANNER_STORAGE_BYTES);
@@ -188,6 +197,11 @@ pub struct Banner {
     pub struck_by: AccountId,
     /// Mock yield included in `prize`.
     pub yield_earned: NearToken,
+    /// Taken out of the tower at the strike for the tents still standing. Each takes its pro
+    /// rata part of this, against `principal`, when it is withdrawn.
+    pub camp_pool: NearToken,
+    /// Paid out of `camp_pool` so far.
+    pub camp_paid: NearToken,
 }
 
 #[near(serializers = [json])]
@@ -230,8 +244,9 @@ pub enum TickResult {
 /// What a payout pays for, so a failed transfer can be put back.
 #[near(serializers = [json])]
 pub enum Payout {
-    Tent { round_id: u64 },
+    Tent { round_id: u64, principal: NearToken, camp_share: NearToken },
     Banner { round_id: u64, tower: NearToken, chest: NearToken },
+    Purse,
 }
 
 #[near(event_json(standard = "lastflag"))]
@@ -254,13 +269,18 @@ pub enum Event {
         blocks: u32,
         by: AccountId,
         hard_cap: bool,
+        camp_pool: NearToken,
     },
     #[event_version("1.0.0")]
-    TentPacked { round_id: u64, account_id: AccountId, amount: NearToken },
+    TentPacked { round_id: u64, account_id: AccountId, amount: NearToken, camp_share: NearToken },
     #[event_version("1.0.0")]
     PrizeClaimed { token_id: TokenId, account_id: AccountId, tower: NearToken, chest: NearToken },
     #[event_version("1.0.0")]
     YieldFunded { by: AccountId, amount: NearToken, reserve: NearToken },
+    #[event_version("1.0.0")]
+    PurseFunded { account_id: AccountId, amount: NearToken, purse: NearToken },
+    #[event_version("1.0.0")]
+    PurseWithdrawn { account_id: AccountId, amount: NearToken, purse: NearToken },
 }
 
 #[near(contract_state)]
@@ -276,6 +296,8 @@ pub struct Contract {
     tent_index: LookupMap<(u64, u32), AccountId>,
     /// Real NEAR set aside to pay mock yield. Never mixed with principal or prizes.
     yield_reserve: NearToken,
+    /// NEAR players have prefunded, spent by `bid`. Pulled back with `withdraw_purse`.
+    purses: LookupMap<AccountId, NearToken>,
 }
 
 #[near]
@@ -302,6 +324,7 @@ impl Contract {
             ),
             tent_index: LookupMap::new(StorageKey::TentIndex),
             yield_reserve: NearToken::from_yoctonear(0),
+            purses: LookupMap::new(StorageKey::Purses),
         }
     }
 
@@ -310,77 +333,57 @@ impl Contract {
     /// Any panic refunds the whole attached deposit.
     #[payable]
     pub fn deposit(&mut self, round_id: u64) -> NearToken {
-        let now = env::block_timestamp_ms();
         let account = env::predecessor_account_id();
         let attached = env::attached_deposit();
-        require!(round_id == self.round.id, "round moved on");
-        require!(!self.round.hard_cap_reached(now), "hard cap reached, the round is ending");
-        let charge = self.round.min_deposit;
-        require!(attached >= charge, format!("below current minimum of {charge}"));
-        self.accrue_yield(now);
-
-        let p = &self.params;
-        let to_pot = bps(charge, p.pot_fee_bps);
-        let royalty = bps(charge, p.royalty_fee_bps);
-        let principal = charge.saturating_sub(to_pot).saturating_sub(royalty);
-
-        let key = (round_id, account.clone());
-        let before = env::storage_usage();
-        let tent = self.tents.get(&key);
-        if tent.is_none() {
-            self.tent_index.insert(&(round_id, self.round.tents_pitched), &account);
-            self.round.tents_pitched += 1;
-        }
-        let tent = tent.unwrap_or(NearToken::from_yoctonear(0));
-        self.tents.insert(&key, &tent.saturating_add(principal));
-        // The tower pays for the tent's storage. Params::check makes the minimum cover it.
-        let tent_storage = storage_cost(before);
-        require!(to_pot >= tent_storage, "block too small to cover its storage");
-        let mut to_prize = to_pot.saturating_sub(tent_storage);
-        // The round's first block sets aside the banner's storage.
-        let reserve = if self.round.blocks == 0 {
-            storage_bytes_cost(BANNER_STORAGE_BYTES)
-        } else {
-            NearToken::from_yoctonear(0)
-        };
-        require!(to_prize >= reserve, "block too small to cover the banner's storage");
-        to_prize = to_prize.saturating_sub(reserve);
-
-        let prev = round_id - 1;
-        match self.banners.get(&prev) {
-            Some(mut b) => {
-                b.chest = b.chest.saturating_add(royalty);
-                self.banners.insert(&prev, &b);
-            }
-            None => to_prize = to_prize.saturating_add(royalty),
-        }
-
-        let r = &mut self.round;
-        r.leader = Some(account.clone());
-        r.prize = r.prize.saturating_add(to_prize);
-        r.storage_reserve = r.storage_reserve.saturating_add(reserve);
-        r.principal_total = r.principal_total.saturating_add(principal);
-        r.blocks += 1;
-        let grown = bps(r.min_deposit, p.growth_bps).saturating_add(r.min_deposit);
-        r.min_deposit = grown.min(p.min_deposit_cap);
-        r.last_deposit_at_ms = now;
-        r.grace_until_ms = now + p.grace_ms;
-        r.hard_cap_at_ms = now + p.hard_cap_ms;
-
-        Event::FlagPlanted {
-            round_id,
-            account_id: account.clone(),
-            charged: charge,
-            min_deposit: r.min_deposit,
-            grace_until_ms: r.grace_until_ms,
-        }
-        .emit();
-
+        let charge = self.plant(&account, round_id, attached);
         let refund = attached.saturating_sub(charge);
         if !refund.is_zero() {
             Promise::new(account).transfer(refund).detach();
         }
         charge
+    }
+
+    /// Plant a flag from your purse, paying at most `max`. Takes no deposit, so a function-call
+    /// key limited to this method can sign it: the game needs no wallet popup. Such a key can
+    /// only ever turn the purse into bids, and 96% of each bid is still the purse owner's tent.
+    pub fn bid(&mut self, round_id: u64, max: NearToken) -> NearToken {
+        let account = env::predecessor_account_id();
+        let purse = self.purses.get(&account).unwrap_or(NearToken::from_yoctonear(0));
+        require!(purse >= self.round.min_deposit, "purse too low for this bid");
+        let charge = self.plant(&account, round_id, max);
+        self.purses.insert(&account, &purse.saturating_sub(charge));
+        charge
+    }
+
+    /// Prefund bids. The first top-up pays the purse's own storage out of what is attached.
+    #[payable]
+    pub fn fund_purse(&mut self) -> NearToken {
+        let account = env::predecessor_account_id();
+        let attached = env::attached_deposit();
+        let held = self.purses.get(&account).unwrap_or(NearToken::from_yoctonear(0));
+        let before = env::storage_usage();
+        self.purses.insert(&account, &held);
+        let storage = storage_cost(before);
+        require!(attached > storage, format!("attach more than the purse's storage of {storage}"));
+        let purse = held.saturating_add(attached).saturating_sub(storage);
+        self.purses.insert(&account, &purse);
+        Event::PurseFunded { account_id: account, amount: attached, purse }.emit();
+        purse
+    }
+
+    /// Take NEAR out of your purse, all of it if `amount` is omitted. One yocto attached, so a
+    /// function-call key can never call this.
+    #[payable]
+    pub fn withdraw_purse(&mut self, amount: Option<NearToken>) -> Promise {
+        assert_one_yocto();
+        let account = env::predecessor_account_id();
+        let purse = self.purses.get(&account).unwrap_or_else(|| env::panic_str("no purse"));
+        let amount = amount.unwrap_or(purse);
+        require!(!amount.is_zero() && amount <= purse, "not that much in your purse");
+        let left = purse.saturating_sub(amount);
+        self.purses.insert(&account, &left);
+        Event::PurseWithdrawn { account_id: account.clone(), amount, purse: left }.emit();
+        self.pay(account, Payout::Purse, amount)
     }
 
     /// Ring the bell. Anyone may call it once the sun is down; one roll per block, so spamming
@@ -410,7 +413,8 @@ impl Contract {
         self.settle(by, hard_cap, now)
     }
 
-    /// Pack up a tent. Past rounds any time; the current round only while someone else is on top.
+    /// Pack up a tent. Past rounds any time, with the tent's part of the camp pool; the current
+    /// round only while someone else is on top, which gives up that part.
     pub fn withdraw(&mut self, round_id: u64) -> Promise {
         let account = env::predecessor_account_id();
         let current = round_id == self.round.id;
@@ -424,12 +428,20 @@ impl Contract {
             .tents
             .remove(&(round_id, account.clone()))
             .unwrap_or_else(|| env::panic_str("no tent in that round"));
+        let mut camp_share = NearToken::from_yoctonear(0);
         if current {
             self.accrue_yield(env::block_timestamp_ms());
             self.round.principal_total = self.round.principal_total.saturating_sub(amount);
+        } else if let Some(mut banner) = self.banners.get(&round_id) {
+            camp_share = Self::camp_share_of(&banner, amount);
+            if !camp_share.is_zero() {
+                banner.camp_paid = banner.camp_paid.saturating_add(camp_share);
+                self.banners.insert(&round_id, &banner);
+            }
         }
-        Event::TentPacked { round_id, account_id: account.clone(), amount }.emit();
-        self.pay(account, Payout::Tent { round_id }, amount)
+        Event::TentPacked { round_id, account_id: account.clone(), amount, camp_share }.emit();
+        let payout = Payout::Tent { round_id, principal: amount, camp_share };
+        self.pay(account, payout, amount.saturating_add(camp_share))
     }
 
     /// Pay the banner's owner everything it holds: the tower if unclaimed, plus the chest.
@@ -477,13 +489,25 @@ impl Contract {
             return true;
         }
         match payout {
-            Payout::Tent { round_id } => {
+            // Only the principal goes back in the tent. The share is worked out again on the
+            // next withdraw, so putting it back here would pay it twice.
+            Payout::Tent { round_id, principal, camp_share } => {
                 let key = (round_id, account_id);
                 let tent = self.tents.get(&key).unwrap_or(NearToken::from_yoctonear(0));
-                self.tents.insert(&key, &tent.saturating_add(amount));
+                self.tents.insert(&key, &tent.saturating_add(principal));
                 if round_id == self.round.id {
-                    self.round.principal_total = self.round.principal_total.saturating_add(amount);
+                    self.round.principal_total = self.round.principal_total.saturating_add(principal);
                 }
+                if !camp_share.is_zero() {
+                    if let Some(mut b) = self.banners.get(&round_id) {
+                        b.camp_paid = b.camp_paid.saturating_sub(camp_share);
+                        self.banners.insert(&round_id, &b);
+                    }
+                }
+            }
+            Payout::Purse => {
+                let purse = self.purses.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+                self.purses.insert(&account_id, &purse.saturating_add(amount));
             }
             Payout::Banner { round_id, tower, chest } => {
                 if let Some(mut b) = self.banners.get(&round_id) {
@@ -534,6 +558,10 @@ impl Contract {
             now_ms: now,
             yield_reserve: self.yield_reserve.saturating_sub(owed),
         }
+    }
+
+    pub fn get_purse(&self, account_id: AccountId) -> NearToken {
+        self.purses.get(&account_id).unwrap_or(NearToken::from_yoctonear(0))
     }
 
     pub fn get_tent(&self, round_id: u64, account_id: AccountId) -> Option<NearToken> {
@@ -594,6 +622,83 @@ impl Contract {
 }
 
 impl Contract {
+    /// Puts `account` on top for the current minimum, as long as that is within `limit`.
+    /// Returns what it charged; moving that NEAR is up to the caller.
+    fn plant(&mut self, account: &AccountId, round_id: u64, limit: NearToken) -> NearToken {
+        let now = env::block_timestamp_ms();
+        require!(round_id == self.round.id, "round moved on");
+        require!(!self.round.hard_cap_reached(now), "hard cap reached, the round is ending");
+        let charge = self.round.min_deposit;
+        require!(limit >= charge, format!("below current minimum of {charge}"));
+        self.accrue_yield(now);
+
+        let p = &self.params;
+        let to_pot = bps(charge, p.pot_fee_bps);
+        let royalty = bps(charge, p.royalty_fee_bps);
+        let principal = charge.saturating_sub(to_pot).saturating_sub(royalty);
+
+        let key = (round_id, account.clone());
+        let before = env::storage_usage();
+        let tent = self.tents.get(&key);
+        if tent.is_none() {
+            self.tent_index.insert(&(round_id, self.round.tents_pitched), account);
+            self.round.tents_pitched += 1;
+        }
+        let tent = tent.unwrap_or(NearToken::from_yoctonear(0));
+        self.tents.insert(&key, &tent.saturating_add(principal));
+        // The tower pays for the tent's storage. Params::check makes the minimum cover it.
+        let tent_storage = storage_cost(before);
+        require!(to_pot >= tent_storage, "block too small to cover its storage");
+        let mut to_prize = to_pot.saturating_sub(tent_storage);
+        // The round's first block sets aside the banner's storage.
+        let reserve = if self.round.blocks == 0 {
+            storage_bytes_cost(BANNER_STORAGE_BYTES)
+        } else {
+            NearToken::from_yoctonear(0)
+        };
+        require!(to_prize >= reserve, "block too small to cover the banner's storage");
+        to_prize = to_prize.saturating_sub(reserve);
+
+        let prev = round_id - 1;
+        match self.banners.get(&prev) {
+            Some(mut b) => {
+                b.chest = b.chest.saturating_add(royalty);
+                self.banners.insert(&prev, &b);
+            }
+            None => to_prize = to_prize.saturating_add(royalty),
+        }
+
+        let r = &mut self.round;
+        r.leader = Some(account.clone());
+        r.prize = r.prize.saturating_add(to_prize);
+        r.storage_reserve = r.storage_reserve.saturating_add(reserve);
+        r.principal_total = r.principal_total.saturating_add(principal);
+        r.blocks += 1;
+        let grown = bps(r.min_deposit, p.growth_bps).saturating_add(r.min_deposit);
+        r.min_deposit = grown.min(p.min_deposit_cap);
+        r.last_deposit_at_ms = now;
+        r.grace_until_ms = now + p.grace_ms;
+        r.hard_cap_at_ms = now + p.hard_cap_ms;
+
+        Event::FlagPlanted {
+            round_id,
+            account_id: account.clone(),
+            charged: charge,
+            min_deposit: r.min_deposit,
+            grace_until_ms: r.grace_until_ms,
+        }
+        .emit();
+        charge
+    }
+
+    /// A tent's part of its round's camp pool. Capped by what is left of the pool: a payout
+    /// that failed across the strike can restore a tent `banner.principal` no longer counts,
+    /// and the shares must still never add up to more than the pool.
+    fn camp_share_of(banner: &Banner, principal: NearToken) -> NearToken {
+        pro_rata(banner.camp_pool, principal, banner.principal)
+            .min(banner.camp_pool.saturating_sub(banner.camp_paid))
+    }
+
     /// Mint banner N to the leader, pay the bell ringer, open round N+1. One receipt, no
     /// cross-contract step, so there is no half-settled state to retry.
     fn settle(&mut self, by: AccountId, hard_cap: bool, now: u64) -> TickResult {
@@ -643,6 +748,8 @@ impl Contract {
             ticks: round.ticks,
             struck_by: by.clone(),
             yield_earned: round.yield_paid,
+            camp_pool: NearToken::from_yoctonear(0),
+            camp_paid: NearToken::from_yoctonear(0),
         };
         self.banners.insert(&round.id, &banner);
         // The reserve covers the worst case, so this never dips into principal. What it does
@@ -652,7 +759,9 @@ impl Contract {
             .saturating_add(round.storage_reserve)
             .saturating_sub(storage_cost(before));
         let reward = self.params.keeper_reward.min(bps_u128(available, KEEPER_MAX_SHARE_BPS));
-        banner.prize = available.saturating_sub(reward);
+        let winnings = available.saturating_sub(reward);
+        banner.camp_pool = bps(winnings, self.params.camp_share_bps);
+        banner.prize = winnings.saturating_sub(banner.camp_pool);
         self.banners.insert(&round.id, &banner);
 
         NftMint { owner_id: &winner, token_ids: &[&token_id], memo: None }.emit();
@@ -663,6 +772,7 @@ impl Contract {
             blocks: round.blocks,
             by: by.clone(),
             hard_cap,
+            camp_pool: banner.camp_pool,
         }
         .emit();
 
@@ -715,6 +825,20 @@ fn bps(amount: NearToken, bps: u32) -> NearToken {
 
 fn bps_u128(amount: NearToken, bps: u128) -> NearToken {
     NearToken::from_yoctonear(amount.as_yoctonear() * bps / BPS)
+}
+
+/// `pool * part / whole`, rounded down so the parts never add up to more than the pool. Yocto
+/// amounts multiply past u128, so `part / whole` is taken first, as a fraction of 10^12, on
+/// amounts scaled down by 10^9. All rounding is down, at most about a millionth of a NEAR.
+fn pro_rata(pool: NearToken, part: NearToken, whole: NearToken) -> NearToken {
+    const UNIT: u128 = 1_000_000_000;
+    const ONE: u128 = 1_000_000_000_000;
+    let whole = whole.as_yoctonear() / UNIT;
+    if whole == 0 {
+        return NearToken::from_yoctonear(0);
+    }
+    let fraction = (part.as_yoctonear() / UNIT).min(whole) * ONE / whole;
+    NearToken::from_yoctonear(pool.as_yoctonear() / ONE * fraction)
 }
 
 fn storage_cost(before: u64) -> NearToken {
