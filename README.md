@@ -12,8 +12,8 @@ Built at NEAR HACKATHON. The repository's history starts on 3 Nov 2026.
 
 | | |
 | --- | --- |
-| Simulator in the browser, nothing to install | https://last-flag-psi.vercel.app/?sim |
-| Live testnet game | https://last-flag-psi.vercel.app/ |
+| Simulator in the browser, nothing to install | https://lastflag.xyz/?sim |
+| Live testnet game | https://lastflag.xyz/ |
 | Contract | [`lastflag-v2.testnet`](https://testnet.nearblocks.io/address/lastflag-v2.testnet) |
 | Rules, with the live and demo numbers | [RULES.md](RULES.md) |
 
@@ -39,7 +39,7 @@ bell, and the ringer whose bell strikes is paid from the tower.
 
 ## Try it in 1 minute
 
-Open https://last-flag-psi.vercel.app/?sim. The simulator runs the whole game in the browser.
+Open https://lastflag.xyz/?sim. The simulator runs the whole game in the browser.
 No wallet, no chain, nothing to install.
 
 1. The page opens on **How to play**. Click **The Hill** in the header. You see the tower with
@@ -84,7 +84,7 @@ and `"status":"Live"`. Run it again a few minutes later and `leader` and `blocks
 because the bots keep bidding. Put `get_params` or `nft_total_supply` in `method_name` for the
 deployed parameters or the number of banners minted.
 
-To play it, open https://last-flag-psi.vercel.app/. The header shows the same round `id` as the
+To play it, open https://lastflag.xyz/. The header shows the same round `id` as the
 call above. **CONNECT** signs in with a NEAR testnet wallet through near-connect, and bids are
 real transactions. A hill takes about an hour to end, so use the simulator to see a strike.
 
