@@ -8,11 +8,56 @@ funded mock yield. The tents still standing split the rest. Everyone takes 96% o
 The banner then earns 1% of every bid in the next hill. There is a hard cap, no owner and no admin
 key, and whoever rings the striking bell gets a small reward.
 
-Full rules with the live and demo numbers: [RULES.md](RULES.md).
+Built at NEAR HACKATHON. The repository's history starts on 3 Nov 2026.
+
+| | |
+| --- | --- |
+| Simulator in the browser, nothing to install | https://last-flag-psi.vercel.app/?sim |
+| Live testnet game | https://last-flag-psi.vercel.app/ |
+| Contract | [`lastflag-v2.testnet`](https://testnet.nearblocks.io/address/lastflag-v2.testnet) |
+| Rules, with the live and demo numbers | [RULES.md](RULES.md) |
+
+![The hill during bidding: the tower, the leader's flag, the tents and the bid tray](docs/hill.jpg)
+
+## The problem
+
+Last-bidder games (Fomo3D and its copies) have two known faults:
+
+- **Everyone but the winner loses their bids.** The prize is other players' money.
+- **The end is a visible countdown.** The game goes to whoever can snipe the last second or
+  stuff the final blocks. Fomo3D's first round was won by block stuffing in 2018.
+
+Last Flag changes both:
+
+- **A bid is a deposit.** 96% of it comes back, win or lose. The prize is made of the 3% fee
+  only.
+- **There is no last second.** Once the sun sets, every block has the same 5% chance of ending
+  the hill, so there is no final block to snipe or stuff.
+
+The game also runs without an operator. Parameters are fixed at deploy, anyone can ring the
+bell, and the ringer whose bell strikes is paid from the tower.
 
 ## Try it in 1 minute
 
-The browser simulator runs the whole game locally. No wallet, no chain.
+Open https://last-flag-psi.vercel.app/?sim. The simulator runs the whole game in the browser.
+No wallet, no chain, nothing to install.
+
+1. The page opens on **How to play**. Click **The Hill** in the header. You see the tower with
+   the leader's flag, a **Bidding closes in** timer top left, and the bots (`whale`, `sniper`,
+   `dibs`, `moss`, `pip`, `rook`) already bidding.
+2. Click **CONNECT** (top right). You get a mock wallet, `ahnaf.testnet`, with 25 NEAR.
+3. Click **Bid ... NEAR and take the lead** in the bottom tray. Your block drops onto the
+   tower, your flag goes up and the timer resets.
+4. In the **DEMO** panel (bottom right), click **skip to sunset**, then **5x**. Night falls and
+   rain starts. The keeper rings the bell; every bell is a lightning bolt that misses.
+5. Within seconds a bolt hits the tower: the strike. A window says the round is over, who won,
+   and what is ready for you.
+6. Click **Take it** to get your deposit back. Click **See banners** to open the Hall, where
+   the banner's owner can claim the tower and empty the chest.
+
+![The strike: the round is over, the prize, the deposit and the camp share](docs/strike.jpg)
+
+To run the same simulator on your machine:
 
 ```bash
 cd web
@@ -20,21 +65,28 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:5173. You'll see:
-
-- The hill in daylight, the tower on the summit with the leader's flag, and the sun timer top
-  left. The bots (`whale`, `sniper`, `dibs`, `moss`, `pip`, `rook`) are already bidding.
-- Click **CONNECT** (a mock wallet, `ahnaf.testnet` with 25 NEAR), then **Bid ... NEAR and take
-  the lead** in the bottom tray. Your block drops onto the tower, your flag goes up, the sun
-  resets.
-- In the demo panel (bottom right), click **skip to sunset**. Night falls and rain starts. The
-  keeper rings the bell; every bell is a lightning bolt that misses.
-- Click **5x**. Within seconds a bolt hits the tower: the strike. The winner gets the banner and
-  the next hill opens. **Take it** returns your deposit; **See banners** opens the Hall, where
-  the banner's owner can claim the tower and empty the chest.
-- **How to play** in the header walks through the rules on the game's own pictures.
+Open http://localhost:5173 and follow the steps above.
 
 The simulator uses its own params (a 60 s sun, among others). See [web/README.md](web/README.md).
+
+## Check the live testnet game
+
+`lastflag-v2.testnet` runs hour-long hills with a hosted keeper and six bots.
+
+Read its state without a wallet (needs `curl` and `jq`):
+
+```bash
+curl -s https://rpc.testnet.fastnear.com -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"lastflag-v2.testnet","method_name":"get_round","args_base64":"e30="}}' | jq -r '.result.result | implode'
+```
+
+You'll see the current round as JSON: its `id`, the `leader`, the `prize`, the `min_deposit`
+and `"status":"Live"`. Run it again a few minutes later and `leader` and `blocks` have changed,
+because the bots keep bidding. Put `get_params` or `nft_total_supply` in `method_name` for the
+deployed parameters or the number of banners minted.
+
+To play it, open https://last-flag-psi.vercel.app/. The header shows the same round `id` as the
+call above. **CONNECT** signs in with a NEAR testnet wallet through near-connect, and bids are
+real transactions. A hill takes about an hour to end, so use the simulator to see a strike.
 
 ## Play the real contract locally
 
@@ -146,7 +198,9 @@ chance to win, and gets the rest back.
   bid can't cover it.
 - **Owner rug.** The contract has no owner, no admin method and no upgrade method. `new` is
   private and runs in the deploy transaction. This holds only after the contract account's
-  full-access keys are deleted; until then, whoever holds a key can redeploy.
+  full-access keys are deleted; until then, whoever holds a key can redeploy. The live
+  `lastflag-v2.testnet` has no access keys left: its only key was deleted in
+  [this transaction](https://testnet.nearblocks.io/txns/4D41L7fJKvu5n8tBBf1fGirL5nXbcA3ba2taz13mpX1v).
 - **Unaudited.** This is hackathon code.
 
 ## Repo layout
@@ -162,6 +216,7 @@ web/                  Vite + React frontend: simulator and live mode
   src/chain/          live mode: RPC views, signer, contract calls
   src/ui/, src/scene/ HUD, Hall of Banners, rules; the hill scene
 RULES.md              player rules with the demo numbers
+docs/                 screenshots used in this README
 ```
 
 Each part has its own README: [contracts/lastflag](contracts/lastflag/README.md) (methods,
@@ -217,13 +272,50 @@ Then delete the contract account's full-access keys, so nobody can redeploy it.
 Point the web app at it with `VITE_CONTRACT_ID=lastflag.you.testnet` in `web/.env.local`, then
 `pnpm dev` or `pnpm build`. Players sign with a NEAR wallet through near-connect.
 
+## What NEAR does here
+
+- **Function-call access keys** make one-tap bids. `bid` takes no deposit, so a key limited to
+  that one method can sign it and the player sees no wallet popup. The key can't withdraw.
+- **NEP-171** is the banner. The token holds the tower, and the right to claim it moves with
+  the token on `nft_transfer`. Approvals, enumeration and metadata are implemented, and
+  **NEP-199** payouts (`nft_payout`, `nft_transfer_payout`) let a marketplace sell it.
+- **Block randomness** (`env::random_seed()`) rolls each bell on chain. No oracle.
+- **Named sub-accounts** are the bots: `whale.lastflag.testnet`, `sniper.lastflag.testnet` and
+  four more, each with its own key and balance.
+- **Promise callbacks** restore a ledger entry when a payout fails, so a transfer to a deleted
+  account can't lose or double the money.
+- **Storage staking** is paid from the 3% fee, never from a player's deposit.
+
+Not used: NEAR Intents, Chain Signatures.
+
 ## Tracks
 
-- **NFTs That Do Something**: the banner holds the prize, earns a royalty, and carries its
-  hill's history in its metadata.
-- **Games With Real Economies**: the fees, the growing minimum and the chest are the game loop.
-- **Unstoppable DeFi**: no-loss, no owner, no admin key; nobody can stop or change a hill.
-- **Open Innovation**: a hidden hazard-rate end instead of a countdown.
+- **NFTs That Do Something** (`nfts`): the banner owns money (the tower), earns a royalty (1%
+  of every bid in the next hill), and carries its hill's history in its metadata. Whoever holds
+  it collects, and a listed banner can't be emptied mid-sale.
+- **Games With Real Economies** (`games`): the fees, the growing minimum, the campfire and the
+  chest are the game loop. The six bots are NPCs with their own wallets, each bidding by its own
+  rule (`keeper/src/bots.ts`). With one-tap bids on, a player never sees the chain.
+- **Open Innovation** (`open`): a last-bidder game that ends on a hazard rate instead of a
+  countdown, and that returns the bids.
+
+## Built with
+
+- **Contract**: Rust, `near-sdk` 5, `near-contract-standards` 5.
+- **Keeper, bots, tests**: Node 24, TypeScript, `near-api-js` 7.4.0, `near-sandbox` 0.3.5.
+- **Web**: React 19, Vite 8, TypeScript, `zustand`, `three` with `@react-three/fiber` and
+  `@react-three/drei`, `@hot-labs/near-connect` 0.12.0 for wallets, `oxlint`. Fonts: Fredoka
+  and Nunito.
+- **Art**: the hill and hall pictures in `web/public/img/` were generated with gpt-image-2.
+
+## Status
+
+Checked on 13 Nov 2026.
+
+- **Testnet only, unaudited.** This is hackathon code.
+- **Live hills pay no yield.** The yield reserve on `lastflag-v2.testnet` is empty, so the tower
+  is fees only. The yield is a mock in any case: it is paid from a reserve someone funds, not
+  earned by staking the deposits.
 
 ## License
 
